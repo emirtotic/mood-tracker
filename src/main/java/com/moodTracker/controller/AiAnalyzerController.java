@@ -23,7 +23,7 @@ public class AiAnalyzerController {
         String resolved = resolveEmail(principal, email);
         if (resolved == null || resolved.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Email nije prosleđen. Autentifikuj se ili dodaj ?email=<addr>.");
+                    "Authentication failed!");
         }
         return aiAdviceService.analyze(resolved);
     }
@@ -35,7 +35,7 @@ public class AiAnalyzerController {
         String resolved = resolveEmail(principal, email);
         if (resolved == null || resolved.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Email nije prosleđen. Autentifikuj se ili dodaj ?email=<addr>.");
+                    "Authentication failed!");
         }
         return aiAdviceService.analyze(resolved);
     }
