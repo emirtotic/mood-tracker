@@ -1,6 +1,6 @@
 # Mood Tracker — Backend
 
-Spring Boot backend for tracking daily mood entries and generating weekly AI insights. Focus: clean REST API, MySQL, JWT auth, MapStruct DTO mapping, and OpenRouter **free** models for AI suggestions.
+Spring Boot backend for tracking daily mood entries and generating AI insights. Focus: clean REST API, MySQL, JWT auth, MapStruct DTO mapping, and OpenRouter **free** models for AI suggestions.
 
 ---
 
