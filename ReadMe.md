@@ -143,7 +143,7 @@ logging.level.org.springframework.web.client=DEBUG
 
 ## Database
 
-**Table **`` (minimal):
+**Table mood_entries``:
 
 - `id BIGINT PK`
 - `user_id BIGINT FK -> users.id`
