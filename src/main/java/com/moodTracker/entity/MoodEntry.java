@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.*;
+
 import java.time.LocalDate;
 
 @Entity
@@ -11,7 +12,11 @@ import java.time.LocalDate;
         name = "mood_entries",
         uniqueConstraints = @UniqueConstraint(columnNames = {"user_id","entry_date"})
 )
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class MoodEntry {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

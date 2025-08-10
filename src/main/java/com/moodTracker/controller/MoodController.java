@@ -2,7 +2,6 @@ package com.moodTracker.controller;
 
 import com.moodTracker.dto.MoodEntryRequest;
 import com.moodTracker.dto.MoodEntryResponse;
-import com.moodTracker.entity.User;
 import com.moodTracker.exception.BadRequestException;
 import com.moodTracker.service.MoodEntryService;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +17,6 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.util.List;
 
 @RestController
 @RequiredArgsConstructor

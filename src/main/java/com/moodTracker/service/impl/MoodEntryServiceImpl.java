@@ -1,11 +1,13 @@
 package com.moodTracker.service.impl;
 
+import com.moodTracker.dto.MoodEntryDto;
 import com.moodTracker.dto.MoodEntryRequest;
 import com.moodTracker.dto.MoodEntryResponse;
 import com.moodTracker.entity.MoodEntry;
 import com.moodTracker.entity.User;
 import com.moodTracker.exception.BadRequestException;
 import com.moodTracker.exception.MoodEntryAlreadyExistsException;
+import com.moodTracker.mapper.MoodEntryMapper;
 import com.moodTracker.repository.MoodEntryRepository;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.service.MoodEntryService;
@@ -17,6 +19,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -25,6 +29,7 @@ public class MoodEntryServiceImpl implements MoodEntryService {
 
     private final UserRepository userRepository;
     private final MoodEntryRepository moodRepo;
+    private final MoodEntryMapper moodEntryMapper;
 
     @Override
     public MoodEntryResponse create(String userEmail, MoodEntryRequest req) {
@@ -64,6 +69,24 @@ public class MoodEntryServiceImpl implements MoodEntryService {
     }
 
     @Override
+    public List<MoodEntryDto> getEntriesForDate(String email) {
+        var user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
+
+        List<MoodEntry> entries = moodRepo.findAllByUserIdAndEntryDateBetweenOrderByEntryDateDesc(user.getId(), LocalDate.now().minusDays(30), LocalDate.now());
+
+        List<MoodEntryDto> result = new ArrayList<>();
+
+        if (entries.isEmpty()) {
+            throw new ResourceNotFoundException("No mood entries found for user: " + email);
+        } else {
+            result = moodEntryMapper.toDto(entries);
+        }
+
+        return result;
+    }
+
+    @Override
     public Page<MoodEntryResponse> getEntryForDateRange(String email, LocalDate start, LocalDate end, Pageable pageable) {
 
         var user = userRepository.findByEmail(email)
@@ -99,6 +122,8 @@ public class MoodEntryServiceImpl implements MoodEntryService {
 
         return "Entry has been deleted.";
     }
+
+
 
     @Override
     public MoodEntryResponse getToday(String userEmail) {

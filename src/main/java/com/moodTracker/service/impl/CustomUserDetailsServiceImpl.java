@@ -4,8 +4,8 @@ import com.moodTracker.entity.User;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.service.CustomUserDetailsService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.userdetails.*;
-
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
