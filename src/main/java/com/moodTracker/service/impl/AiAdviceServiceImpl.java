@@ -3,6 +3,7 @@ package com.moodTracker.service.impl;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.moodTracker.dto.AiPlan;
 import com.moodTracker.dto.MoodEntryAiResponse;
 import com.moodTracker.dto.MoodEntryDto;
 import com.moodTracker.entity.AiAnalysis;
@@ -12,6 +13,7 @@ import com.moodTracker.repository.UserRepository;
 import com.moodTracker.service.AiAdviceService;
 import com.moodTracker.service.MoodEntryService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -25,6 +27,7 @@ import java.util.*;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AiAdviceServiceImpl implements AiAdviceService {
 
     private final RestTemplate restTemplate;
@@ -68,6 +71,8 @@ public class AiAdviceServiceImpl implements AiAdviceService {
         if (entries.isEmpty()) {
             return new MoodEntryAiResponse(0.0, "No entries in last 30 days.", List.of());
         }
+
+        log.info("Analyzing condition of the user: {} {}", user.getFirstName(), user.getLastName());
 
         // JSON payload for AI model
         String payload = entries.stream()
@@ -118,6 +123,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
         }
 
         if (adv == null) {
+            log.error("Could not generate summary from Open AI");
             return new MoodEntryAiResponse(avgRounded, "", List.of());
         }
 
@@ -141,6 +147,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                     .suggestions(List.of(String.valueOf(cleaned)))
                     .createdAt(LocalDateTime.now())
                     .build();
+            log.info("Creating the AI response for {}", user.getEmail());
 
             aiAnalysisRepository.save(response);
         } else {
@@ -150,10 +157,104 @@ public class AiAdviceServiceImpl implements AiAdviceService {
             existing.setSuggestions(cleaned);
             existing.setCreatedAt(LocalDateTime.now());
 
+            log.info("Updating AI response for {}", user.getEmail());
             aiAnalysisRepository.save(existing);
         }
 
         return moodEntryAiResponse;
+    }
+
+    @Override
+    public AiPlan generatePlan(String email) {
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
+
+        AiAnalysis a = aiAnalysisRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new IllegalStateException("No saved AI analysis for user " + user.getId()));
+
+        log.info("Generating the plan from Open AI for {} {}", user.getFirstName(), user.getLastName());
+
+        String language = "en";
+        int days = 7;
+
+        String target = a.getAverage().doubleValue() >= 4.0 ? "maintain" : "improve";
+
+        String bullets = a.getSuggestions().stream()
+                .map(s -> "• " + s)
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        String dayLabel = "en".equalsIgnoreCase(language) ? "Day" : "Dan";
+
+        String prompt = """
+                Language: %s
+                Horizon days: %d
+                Target: %s  // maintain | improve
+                
+                Analysis:
+                average = %.1f
+                summary = %s
+                suggestions:
+                %s
+                
+                Task:
+                Create a %d-day plan as PLAIN TEXT in %s, labeled "%s 1" to "%s %d".
+                Each day must have 3–5 actionable bullet points (<= 15 words each) and ONE short reflection question.
+                Constraints:
+                - Use the suggestions above as backbone.
+                - Practical, supportive tone. No medical diagnoses or alarms.
+                - If target=maintain: focus on sustaining good habits. If improve: gentle recovery steps.
+                - Output PLAIN TEXT only (no JSON, no code fences, no extra meta text).
+                """.formatted(
+                language, days, target,
+                a.getAverage().doubleValue(), a.getSummary(), bullets,
+                days, language, dayLabel, dayLabel, days
+        );
+
+        // candidates: primary + fallback from properties + extra :free models
+        List<String> candidates = new ArrayList<>();
+        if (model != null && !model.isBlank()) candidates.add(model.trim());
+        if (fallbackModel != null && !fallbackModel.isBlank()) candidates.add(fallbackModel.trim());
+        candidates.addAll(List.of(
+                "meta-llama/llama-3.2-3b-instruct:free",
+                "mistralai/mistral-7b-instruct:free",
+                "qwen/qwen2.5-7b-instruct:free"
+        ));
+
+        // remove duplicates and empty spaces
+        candidates = candidates.stream().filter(s -> s != null && !s.isBlank()).distinct().toList();
+
+        String planText = null;
+        for (String m : candidates) {
+            try {
+                planText = callOpenRouterText(m, prompt, 0.8, 1100);
+
+                if (planText != null && !planText.isBlank()) {
+                    log.warn("Plan from AI is generated successfully...");
+                } else {
+                    break;
+                }
+            } catch (org.springframework.web.client.HttpClientErrorException e) {
+                int sc = e.getStatusCode().value();
+                if (sc == 404 || sc == 400 || sc == 429) {
+                    log.warn("Response Status Code from AI is not 200. Trying with different model...");
+                    continue;
+                }
+                throw e;
+            } catch (org.springframework.web.client.ResourceAccessException timeout) {
+                log.warn("Timeout for AI Response. Trying with different model...");
+                continue;
+            }
+        }
+
+        if (planText == null || planText.isBlank()) {
+            log.error("Plan generation temporarily unavailable. Please try again shortly.");
+            throw new IllegalStateException("Plan generation temporarily unavailable. Please try again shortly.");
+        }
+
+        AiPlan plan = new AiPlan();
+        plan.setResponse(planText.trim());
+        return plan;
     }
 
     /* ===================== Helpers ===================== */
@@ -212,6 +313,33 @@ public class AiAdviceServiceImpl implements AiAdviceService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String callOpenRouterText(String model, String prompt, double temperature, int maxTokens) {
+        Map<String, Object> body = Map.of(
+                "model", model,
+                "temperature", temperature,
+                "max_tokens", maxTokens,
+                "messages", List.of(
+                        Map.of("role", "system",
+                                "content", "You are a supportive wellbeing coach. Output PLAIN TEXT only, no JSON, no code fences."),
+                        Map.of("role", "user", "content", prompt)
+                )
+        );
+
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setBearerAuth(apiKey);
+        h.add("HTTP-Referer", referer);
+        h.add("X-Title", title);
+
+        ResponseEntity<String> resp = restTemplate.exchange(
+                baseUrl + "/chat/completions",
+                HttpMethod.POST,
+                new HttpEntity<>(body, h),
+                String.class
+        );
+        return extractAssistantContent(resp.getBody());
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.moodTracker.controller;
 
+import com.moodTracker.dto.AiPlan;
 import com.moodTracker.dto.MoodEntryAiResponse;
 import com.moodTracker.entity.User;
 import com.moodTracker.service.AiAdviceService;
@@ -17,15 +18,15 @@ public class AiAnalyzerController {
 
     private final AiAdviceService aiAdviceService;
 
-    @GetMapping("/analyze")
-    public MoodEntryAiResponse analyzeGet(@AuthenticationPrincipal Object principal,
-                                          @RequestParam(name = "email", required = false) String email) {
+    @PostMapping("/plan")
+    public AiPlan generatePlan(@AuthenticationPrincipal Object principal,
+                               @RequestParam(name = "email", required = false) String email) {
         String resolved = resolveEmail(principal, email);
         if (resolved == null || resolved.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Authentication failed!");
         }
-        return aiAdviceService.analyze(resolved);
+        return aiAdviceService.generatePlan(resolved);
     }
 
 
