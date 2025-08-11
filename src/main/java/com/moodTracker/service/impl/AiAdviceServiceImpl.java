@@ -254,6 +254,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
 
         AiPlan plan = new AiPlan();
         plan.setResponse(planText.trim());
+        log.info("\nPlan generated: \n{}", plan.getResponse());
         return plan;
     }
 
