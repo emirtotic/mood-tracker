@@ -1,5 +1,7 @@
 package com.moodTracker.dto;
 
-import java.util.Date;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
-public record MoodEntryRequest(int moodScore, Date date, String note) {}
+import java.time.LocalDate;
+
+public record MoodEntryRequest(int moodScore, @JsonFormat(pattern = "yyyy-MM-dd") LocalDate date, String note) {}

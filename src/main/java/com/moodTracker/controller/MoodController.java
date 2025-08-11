@@ -32,6 +32,13 @@ public class MoodController {
         return service.create(principal.getUsername(), req);
     }
 
+    @PutMapping("/update")
+    @ResponseStatus(HttpStatus.OK)
+    public MoodEntryResponse update(@AuthenticationPrincipal UserDetails principal,
+                                    @RequestBody MoodEntryRequest req) {
+        return service.update(principal.getUsername(), req);
+    }
+
     @GetMapping("/date")
     public MoodEntryResponse getByDate(
             @AuthenticationPrincipal(expression = "username") String email,

@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.moodTracker.dto.MoodEntryAiResponse;
 import com.moodTracker.dto.MoodEntryDto;
+import com.moodTracker.entity.AiAnalysis;
+import com.moodTracker.entity.User;
+import com.moodTracker.repository.AiAnalysisRepository;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.service.AiAdviceService;
 import com.moodTracker.service.MoodEntryService;
@@ -17,6 +20,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
@@ -27,6 +31,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
     private final ObjectMapper om;
     private final MoodEntryService moodEntryService;
     private final UserRepository userRepository;
+    private final AiAnalysisRepository aiAnalysisRepository;
 
     @Value("${openrouter.base-url}")
     private String baseUrl;
@@ -48,7 +53,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
 
     @Override
     public MoodEntryAiResponse analyze(String email) {
-        userRepository.findByEmail(email)
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
 
         List<MoodEntryDto> entries = moodEntryService.getEntriesForDate(email).stream()
@@ -69,37 +74,37 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 .map(e -> String.format(Locale.ROOT,
                         "{\"date\":\"%s\",\"rating\":%d,\"note\":%s}",
                         e.getEntryDate(), e.getMoodScore(),
-                        e.getNote() == null ? "null" : "\"" + e.getNote().replace("\"","\\\"") + "\""))
+                        e.getNote() == null ? "null" : "\"" + e.getNote().replace("\"", "\\\"") + "\""))
                 .reduce((a, b) -> a + ",\n" + b)
                 .orElse("");
 
         // prompt + mini example (few-shot) + demand the STRICT JSON
         String prompt = """
-        You are an assistant that outputs STRICT JSON only.
-        Analyze the mood logs (array of {"date","rating","note"}). Output Serbian.
-        Return ONLY a valid JSON object:
-        {
-          "summary": "<summary in english language, max 120 words, without generic phrases>",
-          "suggestions": ["three concrete seps, 6–14 words each, without empty strings"]
-        }
-
-        Example input:
-        [{"date":"2025-08-01","rating":2,"note":"Stress at work, not enough sleep"},
-         {"date":"2025-08-02","rating":4,"note":"Walk and hanging out with friends"}]
-        Example output:
+                You are an assistant that outputs STRICT JSON only.
+                Analyze the mood logs (array of {"date","rating","note"}). Output Serbian.
+                Return ONLY a valid JSON object:
                 {
-                  "summary": "Mood fluctuates; sleep and physical activity improve overall tone.",
-                  "suggestions": [
-                    "Set a fixed bedtime for 7–8 hours of sleep",
-                    "Take a 10–15 minute walk after work",
-                    "Record daily stress triggers and responses",
-                    "Schedule a brief social activity twice a week",
-                    "Practice a 5-minute breathing exercise each morning"
-                  ]
+                  "summary": "<summary in english language, max 120 words, without generic phrases>",
+                  "suggestions": ["three concrete seps, 6–14 words each, without empty strings"]
                 }
-        Now analyze these logs and produce JSON only:
-        [%s]
-        """.formatted(payload);
+                
+                Example input:
+                [{"date":"2025-08-01","rating":2,"note":"Stress at work, not enough sleep"},
+                 {"date":"2025-08-02","rating":4,"note":"Walk and hanging out with friends"}]
+                Example output:
+                        {
+                          "summary": "Mood fluctuates; sleep and physical activity improve overall tone.",
+                          "suggestions": [
+                            "Set a fixed bedtime for 7–8 hours of sleep",
+                            "Take a 10–15 minute walk after work",
+                            "Record daily stress triggers and responses",
+                            "Schedule a brief social activity twice a week",
+                            "Practice a 5-minute breathing exercise each morning"
+                          ]
+                        }
+                Now analyze these logs and produce JSON only:
+                [%s]
+                """.formatted(payload);
 
         // 1. attempt – better free model
         Advice adv = callOpenRouterOnce("meta-llama/llama-3.1-8b-instruct:free", prompt, 0.6, 500);
@@ -124,14 +129,43 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 .limit(5)
                 .toList();
 
-        return new MoodEntryAiResponse(avgRounded, adv.summary.trim(), cleaned);
+        MoodEntryAiResponse moodEntryAiResponse = new MoodEntryAiResponse(avgRounded, adv.summary.trim(), cleaned);
+
+        Optional<AiAnalysis> previousAdvice = aiAnalysisRepository.findByUserId(user.getId());
+
+        if (previousAdvice.isEmpty()) {
+            AiAnalysis response = AiAnalysis.builder()
+                    .user(user)
+                    .average(BigDecimal.valueOf(avgRounded))
+                    .summary(adv.summary)
+                    .suggestions(List.of(String.valueOf(cleaned)))
+                    .createdAt(LocalDateTime.now())
+                    .build();
+
+            aiAnalysisRepository.save(response);
+        } else {
+            AiAnalysis existing = previousAdvice.get();
+            existing.setAverage(BigDecimal.valueOf(avgRounded));
+            existing.setSummary(adv.summary.trim());
+            existing.setSuggestions(cleaned);
+            existing.setCreatedAt(LocalDateTime.now());
+
+            aiAnalysisRepository.save(existing);
+        }
+
+        return moodEntryAiResponse;
     }
 
     /* ===================== Helpers ===================== */
 
     private static class Advice {
-        final String summary; final List<String> suggestions;
-        Advice(String summary, List<String> suggestions) { this.summary = summary; this.suggestions = suggestions; }
+        final String summary;
+        final List<String> suggestions;
+
+        Advice(String summary, List<String> suggestions) {
+            this.summary = summary;
+            this.suggestions = suggestions;
+        }
     }
 
     @SuppressWarnings("unchecked") // I know I’m doing an unchecked conversion/cast here so don’t report a warning :)
@@ -180,11 +214,14 @@ public class AiAdviceServiceImpl implements AiAdviceService {
         }
     }
 
-    /** Retrieve assistant message content from OpenRouter/OpenAI response. */
+    /**
+     * Retrieve assistant message content from OpenRouter/OpenAI response.
+     */
     private String extractAssistantContent(String body) {
         if (body == null || body.isBlank()) return "";
         try {
-            Map<String, Object> root = om.readValue(body, new TypeReference<>() {});
+            Map<String, Object> root = om.readValue(body, new TypeReference<>() {
+            });
             List<Map<String, Object>> choices = (List<Map<String, Object>>) root.get("choices");
             if (choices == null || choices.isEmpty()) return "";
             Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
@@ -194,7 +231,9 @@ public class AiAdviceServiceImpl implements AiAdviceService {
         }
     }
 
-    /** Remove ```json fence-ove and return contend of JSON object if exist. */
+    /**
+     * Remove ```json fence-ove and return contend of JSON object if exist.
+     */
     private static String extractJson(String content) {
         if (content == null) return "{}";
         String c = content.trim();

@@ -11,6 +11,7 @@ import java.util.List;
 
 public interface MoodEntryService {
     MoodEntryResponse create(String userEmail, MoodEntryRequest req); // 409 ako postoji
+    MoodEntryResponse update(String userEmail, MoodEntryRequest req);
     MoodEntryResponse getEntryForDate(String email, LocalDate date);
     List<MoodEntryDto> getEntriesForDate(String email);
     MoodEntryResponse getToday(String userEmail);

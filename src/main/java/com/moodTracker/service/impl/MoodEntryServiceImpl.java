@@ -18,7 +18,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -37,7 +36,7 @@ public class MoodEntryServiceImpl implements MoodEntryService {
                 .orElseThrow(() -> new IllegalStateException("User not found"));
 
         LocalDate targetDate = req.date() != null
-                ? req.date().toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+                ? req.date()
                 : LocalDate.now();
 
         if (moodRepo.existsByUserIdAndEntryDate(user.getId(), targetDate)) {
@@ -55,6 +54,30 @@ public class MoodEntryServiceImpl implements MoodEntryService {
 
         me = moodRepo.save(me);
         return new MoodEntryResponse(me.getId(), me.getEntryDate().toString(), me.getMoodScore(), me.getNote());
+    }
+
+    @Override
+    public MoodEntryResponse update(String userEmail, MoodEntryRequest req) {
+
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new IllegalStateException("User not found"));
+
+        Optional<MoodEntry> existingEntry = moodRepo.findByUserIdAndEntryDate(user.getId(), req.date());
+
+        if (existingEntry.isPresent()) {
+            existingEntry.get().setMoodScore(req.moodScore());
+            existingEntry.get().setNote(req.note());
+            moodRepo.save(existingEntry.get());
+        } else {
+            throw new BadRequestException("Entry for date " + req.date() + " is not found");
+        }
+
+        return MoodEntryResponse.builder()
+                .id(existingEntry.get().getId())
+                .date(existingEntry.get().getEntryDate().toString())
+                .moodScore(existingEntry.get().getMoodScore())
+                .note(existingEntry.get().getNote())
+                .build();
     }
 
     @Override
