@@ -12,6 +12,7 @@ import com.moodTracker.repository.MoodEntryRepository;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.service.MoodEntryService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.ResourceNotFoundException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -24,6 +25,7 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MoodEntryServiceImpl implements MoodEntryService {
 
     private final UserRepository userRepository;
@@ -45,6 +47,8 @@ public class MoodEntryServiceImpl implements MoodEntryService {
             );
         }
 
+        log.info("Creating new entry for {} {}", user.getFirstName(), user.getLastName());
+
         MoodEntry me = MoodEntry.builder()
                 .user(user)
                 .entryDate(targetDate)
@@ -65,10 +69,12 @@ public class MoodEntryServiceImpl implements MoodEntryService {
         Optional<MoodEntry> existingEntry = moodRepo.findByUserIdAndEntryDate(user.getId(), req.date());
 
         if (existingEntry.isPresent()) {
+            log.info("Updating entry for {} {} for date {}", user.getFirstName(), user.getLastName(), existingEntry.get().getEntryDate());
             existingEntry.get().setMoodScore(req.moodScore());
             existingEntry.get().setNote(req.note());
             moodRepo.save(existingEntry.get());
         } else {
+            log.error("There is no entry for this date.");
             throw new BadRequestException("Entry for date " + req.date() + " is not found");
         }
 
@@ -87,6 +93,8 @@ public class MoodEntryServiceImpl implements MoodEntryService {
 
         var entry = moodRepo.findByUserIdAndEntryDate(user.getId(), date)
                 .orElseThrow(() -> new ResourceNotFoundException("No mood entry found for date: " + date));
+
+        log.info("Entry for {} is found", entry.getEntryDate());
 
         return new MoodEntryResponse(entry.getId(), date.toString(), entry.getMoodScore(), entry.getNote());
     }
@@ -116,8 +124,10 @@ public class MoodEntryServiceImpl implements MoodEntryService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
 
         if (end.isBefore(start)) {
-            throw new BadRequestException("Parametar 'end' ne sme biti pre 'start'.");
+            throw new BadRequestException("Parameter 'end' should be before 'start'.");
         }
+
+        log.info("Retrieving records from {} to {}", start, end);
 
         return moodRepo
                 .findByUserIdAndEntryDateBetween(user.getId(), start, end, pageable)
@@ -138,8 +148,10 @@ public class MoodEntryServiceImpl implements MoodEntryService {
         Optional<MoodEntry> mood = moodRepo.findById(id);
 
         if (mood.isPresent()) {
+            log.info("Deleting the entry with id {}", id);
             moodRepo.deleteById(id);
         } else {
+            log.error("Record with provided ID doesn't exist.");
             throw new BadRequestException("Record with provided ID doesn't exist.");
         }
 
@@ -156,6 +168,8 @@ public class MoodEntryServiceImpl implements MoodEntryService {
 
         MoodEntry me = moodRepo.findByUserIdAndEntryDate(user.getId(), today)
                 .orElseThrow(() -> new IllegalStateException("No entry for today"));
+
+        log.info("Getting today's entry...");
 
         return new MoodEntryResponse(me.getId(), me.getEntryDate().toString(), me.getMoodScore(), me.getNote());
     }

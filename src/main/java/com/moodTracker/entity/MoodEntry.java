@@ -3,6 +3,7 @@ package com.moodTracker.entity;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.PastOrPresent;
 import lombok.*;
 
 import java.time.LocalDate;
@@ -26,6 +27,7 @@ public class MoodEntry {
     private User user;
 
     @Column(name = "entry_date", nullable = false)
+    @PastOrPresent(message = "Entry date cannot be in the future.")
     private LocalDate entryDate;
 
     @Column(name = "mood_score", nullable = false)

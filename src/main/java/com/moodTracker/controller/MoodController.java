@@ -4,6 +4,7 @@ import com.moodTracker.dto.MoodEntryRequest;
 import com.moodTracker.dto.MoodEntryResponse;
 import com.moodTracker.exception.BadRequestException;
 import com.moodTracker.service.MoodEntryService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,14 +29,14 @@ public class MoodController {
     @PostMapping("/create")
     @ResponseStatus(HttpStatus.CREATED)
     public MoodEntryResponse create(@AuthenticationPrincipal UserDetails principal,
-                                         @RequestBody MoodEntryRequest req) {
+                                    @Valid @RequestBody MoodEntryRequest req) {
         return service.create(principal.getUsername(), req);
     }
 
     @PutMapping("/update")
     @ResponseStatus(HttpStatus.OK)
     public MoodEntryResponse update(@AuthenticationPrincipal UserDetails principal,
-                                    @RequestBody MoodEntryRequest req) {
+                                    @Valid @RequestBody MoodEntryRequest req) {
         return service.update(principal.getUsername(), req);
     }
 
@@ -80,7 +81,6 @@ public class MoodController {
         String result = service.deleteById(email, id);
         return new ResponseEntity<>(result, HttpStatus.OK);
     }
-
 
 
     @GetMapping("/today")

@@ -1,7 +1,7 @@
 package com.moodTracker.service.impl;
 
 import com.moodTracker.dto.LoginRequest;
-import com.moodTracker.dto.UserRegisterRequest;
+import com.moodTracker.dto.RegisterRequest;
 import com.moodTracker.entity.Role;
 import com.moodTracker.entity.User;
 import com.moodTracker.mapper.UserMapper;
@@ -26,7 +26,7 @@ public class UserServiceImpl implements UserService {
     private final JwtService jwtService;
 
     @Override
-    public void registerUser(UserRegisterRequest request) {
+    public void registerUser(RegisterRequest request) {
         if (userRepository.existsByEmail(request.email())) {
             throw new RuntimeException("Email already in use");
         }
