@@ -2,9 +2,9 @@
 FROM maven:3.9.8-eclipse-temurin-22-alpine AS build
 WORKDIR /app
 COPY pom.xml .
-RUN --mount=type=cache,id=cache-maven,target=/root/.m2 mvn -q -e -T 1C -DskipTests dependency:go-offline
+RUN mvn -q -e -T 1C -DskipTests dependency:go-offline
 COPY src ./src
-RUN --mount=type=cache,id=cache-maven,target=/root/.m2 mvn -q -e -T 1C -DskipTests package
+RUN mvn -q -e -T 1C -DskipTests package
 
 # ---------- Run stage ----------
 FROM eclipse-temurin:22-jre-alpine
