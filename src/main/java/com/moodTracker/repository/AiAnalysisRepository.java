@@ -8,5 +8,4 @@ import java.util.Optional;
 public interface AiAnalysisRepository extends JpaRepository<AiAnalysis, Long> {
 
     Optional<AiAnalysis> findByUserId(Long userId);
-    boolean existsByUserId(Long userId);
 }
