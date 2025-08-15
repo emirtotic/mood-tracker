@@ -2,6 +2,7 @@ package com.moodTracker.config;
 
 import com.moodTracker.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -26,9 +27,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final UserDetailsService customUserDetailsService; // com.moodTracker.service.CustomUserDetailsService
+    private final UserDetailsService customUserDetailsService;
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final PasswordEncoder passwordEncoder;
+    @Value("${app.domain}")
+    private String appDomain;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -67,13 +70,13 @@ public class SecurityConfig {
         cfg.setAllowCredentials(true);
 
         cfg.setAllowedOrigins(List.of(
-                "https://app.bubble.io",       // Bubble
-                "https://bubbleapps.io"        // Bubble preview root
+                "http://localhost:5173",
+                appDomain
         ));
 
         cfg.setAllowedOriginPatterns(List.of(
-                "https://*.bubbleapps.io",
-                "https://your-prod-domain.com" // zameniti svojim prod domenom
+                "http://localhost:5173",
+                appDomain
         ));
 
         cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));

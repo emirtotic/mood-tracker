@@ -44,7 +44,7 @@ public class MoodEntryServiceImpl implements MoodEntryService {
         if (moodRepo.existsByUserIdAndEntryDate(user.getId(), targetDate)) {
             throw new MoodEntryAlreadyExistsException(
                     "Mood entry for " + targetDate + " already exists for user " + user.getEmail()
-            );
+                    + ". Please edit the last entry!");
         }
 
         log.info("Creating new entry for {} {}", user.getFirstName(), user.getLastName());
