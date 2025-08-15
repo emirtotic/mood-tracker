@@ -2,6 +2,7 @@ package com.moodTracker.service.impl;
 
 import com.moodTracker.dto.LoginRequest;
 import com.moodTracker.dto.RegisterRequest;
+import com.moodTracker.dto.ResetPasswordRequest;
 import com.moodTracker.entity.Role;
 import com.moodTracker.entity.User;
 import com.moodTracker.mapper.UserMapper;
@@ -12,8 +13,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -57,6 +61,25 @@ public class UserServiceImpl implements UserService {
         return jwtService.generateToken(userDetails);
     }
 
+    @Override
+    public String changePassword(ResetPasswordRequest request) {
+
+        User user = userRepository.findUserByEmail(request.email())
+                .orElseThrow(() -> new UsernameNotFoundException("User not found."));
+
+        if (user != null) {
+            user.setPassword(passwordEncoder.encode(request.newPassword()));
+            userRepository.save(user);
+        }
+
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("Password has been changed for user ")
+                .append(request.email())
+                .append(". Please continue to login page.");
+
+        return sb.toString();
+    }
 
 
 }

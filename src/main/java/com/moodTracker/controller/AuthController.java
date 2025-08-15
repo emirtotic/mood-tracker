@@ -3,6 +3,7 @@ package com.moodTracker.controller;
 import com.moodTracker.dto.JwtResponse;
 import com.moodTracker.dto.LoginRequest;
 import com.moodTracker.dto.RegisterRequest;
+import com.moodTracker.dto.ResetPasswordRequest;
 import com.moodTracker.security.JwtService;
 import com.moodTracker.security.TokenBlacklistService;
 import com.moodTracker.service.UserService;
@@ -29,6 +30,12 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
         String token = userService.login(request);
+        return ResponseEntity.ok(new JwtResponse(token));
+    }
+
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(@Valid @RequestBody ResetPasswordRequest request) {
+        String token = userService.changePassword(request);
         return ResponseEntity.ok(new JwtResponse(token));
     }
 
