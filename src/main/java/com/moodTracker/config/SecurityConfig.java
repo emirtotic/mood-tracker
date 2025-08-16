@@ -32,6 +32,7 @@ public class SecurityConfig {
     private final PasswordEncoder passwordEncoder;
     @Value("${app.domain}")
     private String appDomain;
+    private String domain = "https://moodtracker-app-production.up.railway.app";
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -71,12 +72,12 @@ public class SecurityConfig {
 
         cfg.setAllowedOrigins(List.of(
                 "http://localhost:5173",
-                appDomain
+                domain
         ));
 
         cfg.setAllowedOriginPatterns(List.of(
                 "http://localhost:5173",
-                appDomain
+                domain
         ));
 
         cfg.setAllowedMethods(List.of("GET","POST","PUT","PATCH","DELETE","OPTIONS"));
