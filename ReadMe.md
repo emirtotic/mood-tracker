@@ -1,6 +1,6 @@
 # Mood Tracker
  
-**Live Application:** [Mood Tracker](https://moodtracker-app-production.up.railway.app/dashboard)
+**Live Application:** [Mood Tracker](https://moodtracker-app-production.up.railway.app)
 
 The backend and frontend are deployed on Railway — you can try out the app directly at the link above.
 
