@@ -10,7 +10,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 public interface MoodEntryService {
-    MoodEntryResponse create(String userEmail, MoodEntryRequest req); // 409 ako postoji
+    MoodEntryResponse create(String userEmail, MoodEntryRequest req);
     MoodEntryResponse update(String userEmail, MoodEntryRequest req);
     MoodEntryResponse getEntryForDate(String email, LocalDate date);
     List<MoodEntryDto> getEntriesForDate(String email);

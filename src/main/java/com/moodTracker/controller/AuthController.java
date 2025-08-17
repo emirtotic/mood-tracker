@@ -9,6 +9,7 @@ import com.moodTracker.security.TokenBlacklistService;
 import com.moodTracker.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -33,11 +34,16 @@ public class AuthController {
         return ResponseEntity.ok(new JwtResponse(token));
     }
 
-    @PostMapping("/change-password")
-    public ResponseEntity<?> changePassword(@Valid @RequestBody ResetPasswordRequest request) {
+    @PostMapping(
+            path = "/change-password",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<JwtResponse> changePassword(@Valid @RequestBody ResetPasswordRequest request) {
         String token = userService.changePassword(request);
         return ResponseEntity.ok(new JwtResponse(token));
     }
+
 
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(@RequestHeader(value = "Authorization", required = false) String authHeader) {

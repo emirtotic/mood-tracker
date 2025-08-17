@@ -77,6 +77,8 @@ public class SecurityConfig {
 
         cfg.setAllowedOriginPatterns(List.of(
                 "http://localhost:5173",
+                "http://localhost:*",
+                "https://*.railway.app",
                 domain
         ));
 

@@ -53,7 +53,7 @@ public class MoodController {
             @AuthenticationPrincipal(expression = "username") String email,
             @RequestParam("start") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
             @RequestParam("end")   @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end,
-            @PageableDefault(size = 10, sort = "entryDate", direction = Sort.Direction.DESC)
+            @PageableDefault(size = 20, sort = "entryDate", direction = Sort.Direction.DESC)
             Pageable pageable
     ) {
 

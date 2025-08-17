@@ -158,8 +158,6 @@ public class MoodEntryServiceImpl implements MoodEntryService {
         return "Entry has been deleted.";
     }
 
-
-
     @Override
     public MoodEntryResponse getToday(String userEmail) {
         User user = userRepository.findByEmail(userEmail)
