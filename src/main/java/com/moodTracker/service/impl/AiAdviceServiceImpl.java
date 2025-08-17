@@ -86,7 +86,10 @@ public class AiAdviceServiceImpl implements AiAdviceService {
         // prompt + mini example (few-shot) + demand the STRICT JSON
         String prompt = """
                 You are an assistant that outputs STRICT JSON only.
-                Analyze the mood logs (array of {"date","rating","note"}). Output Serbian.
+                    Analyze the mood logs (array of {"date","rating","note"}).
+                    - Detect the dominant language of the notes (by majority of text).
+                    - Summary and suggestions must be in that dominant language ONLY.
+                    - Do not mix languages.
                 Return ONLY a valid JSON object:
                 {
                   "summary": "<summary in english language, max 120 words, without generic phrases>",
