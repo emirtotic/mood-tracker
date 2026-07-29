@@ -1,123 +1,262 @@
 # Mood Tracker
- 
-**Live Application:** [Mood Tracker](https://moodtracker-app-production.up.railway.app)
 
-The backend and frontend are deployed on Railway — you can try out the app directly at the link above.
+A full-stack mood tracking application built around a Spring Boot REST API. It allows users to record daily mood entries, review trends, and generate AI-assisted summaries, actionable suggestions, and seven-day wellbeing plans.
 
-## Features
+**Live application:** [moodtracker-app-production.up.railway.app](https://moodtracker-app-production.up.railway.app)
 
-- User authentication with JWT (register, login, logout)
-- Secure password change and account management
-- Track daily mood entries with notes and emojis support
-- Validation for entries (minimum 10 characters, maximum 1000)
-- Integration with OpenAI (Spring AI) to analyze moods and provide personalized suggestions
-- Integrated with OpenAI (Spring AI) to generate plan based on your entries (moods)
-- REST API endpoints tested with Postman
-- MySQL database support
-- Docker-ready for easy deployment
+> This project is a portfolio application focused on backend engineering: API design, authentication, persistence, database migrations, external service integration, failure handling, and containerized deployment.
 
-## Tech Stack
+## Highlights
 
-- **Backend:** Java, Spring Boot, Spring Security, Spring Data JPA, Spring AI
-- **Database:** MySQL
-- **Authentication:** JWT with blacklist and refresh handling
-- **Testing:** Postman collections
-- **Deployment:** Railway (Dockerized)
+- Stateless authentication using Spring Security and signed JWTs
+- Password hashing with BCrypt and token revocation on logout
+- One mood entry per user per day, enforced at both application and database level
+- Paginated mood history with date-range validation
+- AI analysis of the most recent 30 days of mood entries
+- Language-aware summaries and five practical wellbeing suggestions
+- Seven-day plans generated from persisted analysis results
+- Resilient OpenRouter integration with timeouts, bounded retries, exponential backoff, and `Retry-After` support
+- Structured AI response parsing and validation
+- Version-controlled MySQL schema using Flyway
+- Multi-stage Docker build with a non-root runtime user
+- Environment-based configuration for local and cloud deployments
 
-## Project Structure
+## Architecture
 
+The backend follows a conventional layered architecture with clear separation between HTTP handling, business logic, persistence, security, and external integrations.
+
+```text
+Client
+  │
+  ▼
+Spring Security / JWT filter
+  │
+  ▼
+REST controllers
+  │
+  ▼
+Application services
+  ├── User and authentication workflows
+  ├── Mood entry business rules
+  └── AI analysis and plan generation
+  │
+  ├──────────────► OpenRouter API
+  │
+  ▼
+Spring Data JPA repositories
+  │
+  ▼
+MySQL / Flyway
 ```
-mood-tracker/
-├── src/main/java/com/moodTracker
-│   ├── controller     # REST controllers
-│   ├── service        # Business logic services
-│   ├── security       # JWT, filters, authentication
-│   ├── model          # Entities and DTOs
-│   ├── repository     # JPA repositories
-│   └── MoodTrackerApplication.java
-├── src/main/resources
-│   ├── application.properties  # Configurations
-│   └── schema.sql              # Database schema (if applicable)
-└── pom.xml
-```
 
-## Endpoints
+### Key design decisions
 
-### Authentication
-- `POST /api/auth/register` – Register new user
-- `POST /api/auth/login` – Authenticate and get JWT
-- `POST /api/auth/logout` – Invalidate JWT (blacklist)
-- `POST /api/auth/change-password` – Change password
+- **Deterministic calculations stay in the application.** The average mood score is calculated in Java; the language model is used only for semantic analysis and text generation.
+- **Database constraints protect domain invariants.** A unique constraint on `(user_id, entry_date)` guarantees no duplicate daily entry, including under concurrent requests.
+- **AI output is treated as untrusted input.** Responses are extracted from the provider envelope, parsed with Jackson, validated, normalized, and persisted only when usable.
+- **External failures are bounded.** AI calls use connect/read timeouts, a maximum number of attempts, capped exponential backoff, and selective retries for transient HTTP failures.
+- **Analysis and plan generation are separate workflows.** The latest valid analysis is persisted per user and becomes the input for plan generation.
+- **Secrets are externalized.** Database credentials, JWT configuration, and provider credentials are supplied through environment variables.
 
-### Mood Entries
-- `POST /api/mood/create` – Create new mood entry
-- `PUT /api/mood/update` – Update mood entry
-- `GET /api/mood/date` – Retrieve mood entry by date
-- `GET /api/mood/range` – Retrieve moods entries by start & end date
-- `DELETE /api/mood/{id}` – Delete entry
+## Technology Stack
 
-### AI Analysis
-- `POST /api/ai/analyze` – Analyze mood entry and provide suggestions with AI
-- `POST /api/ai/plan` – Generate personalized plan with AI based on mood entries
+| Area | Technologies |
+| --- | --- |
+| Language | Java 22 |
+| Framework | Spring Boot 3.5, Spring MVC |
+| Security | Spring Security, JWT, BCrypt |
+| Persistence | Spring Data JPA, Hibernate |
+| Database | MySQL, Flyway |
+| AI integration | OpenRouter Chat Completions API, Jackson |
+| Mapping and boilerplate | MapStruct, Lombok |
+| Build | Maven Wrapper |
+| Deployment | Docker, Railway |
+
+## Core Workflows
+
+### Daily mood tracking
+
+A user can create one entry per calendar day with a score from 1 to 5 and an optional note. Entries can be updated, queried by date, listed through a paginated range, or deleted.
+
+### AI-assisted analysis
+
+The analysis workflow:
+
+1. Loads the authenticated user's entries from the most recent 30-day period.
+2. Sorts and limits the input before sending it to the provider.
+3. Calculates the average mood score locally.
+4. Requests a language-aware summary and concrete suggestions.
+5. Parses and validates the structured response.
+6. Creates or updates the user's latest valid analysis.
 
 Example response:
 
 ```json
 {
   "average": 3.6,
-  "summary": "Concise summary in English language, ~120 words max.",
+  "summary": "Your recent entries show a generally stable mood with occasional fatigue.",
   "suggestions": [
-    "Actionable suggestion #1",
-    "Actionable suggestion #2",
-    "Actionable suggestion #3",
-    "Actionable suggestion #4",
-    "Actionable suggestion #5"
+    "Keep a consistent sleep schedule throughout the coming week",
+    "Plan short recovery breaks during demanding working days",
+    "Continue recording situations that noticeably affect your energy",
+    "Include light physical activity when your schedule allows it",
+    "Reflect on positive events before finishing each daily entry"
   ]
 }
+```
+
+### Seven-day wellbeing plan
+
+The latest persisted analysis is used to generate a practical seven-day plan. The plan adapts its goal according to the calculated average: maintaining beneficial habits for higher averages or suggesting gentle recovery steps for lower averages.
+
+The generated content is intended for general wellbeing support and does not provide medical diagnoses.
+
+## API Overview
+
+All endpoints except authentication routes require:
+
+```http
+Authorization: Bearer <jwt>
+```
+
+### Authentication
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/auth/register` | Register a user |
+| `POST` | `/api/auth/login` | Authenticate and receive a JWT |
+| `POST` | `/api/auth/logout` | Revoke the current JWT |
+| `POST` | `/api/auth/change-password` | Change a user's password |
+
+### Mood entries
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/moods/create` | Create a daily mood entry |
+| `PUT` | `/api/moods/update` | Update an entry by date |
+| `GET` | `/api/moods/today` | Get today's entry |
+| `GET` | `/api/moods/date?date=YYYY-MM-DD` | Get an entry by date |
+| `GET` | `/api/moods/range?start=YYYY-MM-DD&end=YYYY-MM-DD` | Get a paginated date range |
+| `DELETE` | `/api/moods/delete?id={id}` | Delete an entry |
+
+Pagination parameters supported by the range endpoint include `page`, `size`, and `sort`.
+
+### AI
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/ai/analyze` | Analyze recent mood entries and persist the result |
+| `POST` | `/ai/plan` | Generate a seven-day plan from the latest analysis |
+
+## Project Structure
+
+```text
+src
+├── main
+│   ├── java/com/moodTracker
+│   │   ├── config       # HTTP, JSON, security, and persistence configuration
+│   │   ├── controller   # REST API layer
+│   │   ├── dto          # API and application data contracts
+│   │   ├── entity       # JPA entities
+│   │   ├── exception    # Domain and API exception handling
+│   │   ├── mapper       # MapStruct mappings
+│   │   ├── repository   # Spring Data repositories
+│   │   ├── security     # JWT handling, filter, and token revocation
+│   │   └── service      # Business logic and external AI integration
+│   └── resources
+│       ├── application.properties
+│       └── db/migration # Flyway database migrations
+└── test
+    └── java             # Automated test source set
 ```
 
 ## Running Locally
 
 ### Prerequisites
-- Java 21+
-- Maven 3.9+
-- MySQL running locally (or via Docker)
-- Docker (for containerized deployment)
 
-### Steps
+- Java 22
+- Docker, or a locally available MySQL instance
+
+The Maven Wrapper is included, so a separate Maven installation is not required.
+
+### Configuration
+
+The application reads its configuration from environment variables. Export them through your shell or configure them in your IDE. A local `.env` file can be passed to Docker with `--env-file`, but it is not loaded automatically by the application. Never commit real credentials.
+
+Required configuration includes:
+
+```dotenv
+SPRING_APPLICATION_NAME=mood-tracker
+APPLICATION_TITLE=Mood Tracker
+APPLICATION_VERSION=0.0.1
+APPLICATION_AUTHOR=Emir Totic
+
+SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/mood_tracker
+SPRING_DATASOURCE_USERNAME=mood_tracker
+SPRING_DATASOURCE_PASSWORD=change-me
+SPRING_DATASOURCE_DRIVER_CLASS_NAME=com.mysql.cj.jdbc.Driver
+
+SPRING_JPA_HIBERNATE_DDL_AUTO=validate
+SPRING_JPA_SHOW_SQL=false
+SPRING_JPA_HIBERNATE_NAMING_PHYSICAL_STRATEGY=org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy
+
+SPRING_FLYWAY_ENABLED=true
+SPRING_FLYWAY_LOCATIONS=classpath:db/migration
+SPRING_FLYWAY_BASELINE_ON_MIGRATE=true
+
+JWT_SECRET=base64-encoded-secret-with-sufficient-length
+JWT_EXPIRATION=3600000
+
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_API_KEY=replace-with-your-key
+OPENROUTER_REFERER=http://localhost:8080
+OPENROUTER_TITLE=Mood Tracker
+OPENROUTER_MODEL=openrouter/free
+OPENROUTER_FALLBACK_MODEL=openrouter/free
+
+SERVER_PORT=8080
+APP_DOMAIN=http://localhost:5173
+```
+
+### Build and run
+
 ```bash
-# Clone repository
 git clone https://github.com/emirtotic/mood-tracker.git
 cd mood-tracker
 
-# Build
-mvn clean install
-
-# Run
-mvn spring-boot:run
+./mvnw clean package
+./mvnw spring-boot:run
 ```
 
-### Configure Database
-Update `application.properties` with your database credentials:
-```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/database_name
-spring.datasource.username=your_username
-spring.datasource.password=your_password
-spring.jpa.hibernate.ddl-auto=update
-```
+Flyway applies the database migrations during application startup.
 
-## Docker Deployment
+## Docker
 
-Build and run using Docker:
+The Dockerfile uses separate build and runtime stages. The final image contains only the JRE and packaged application, and the process runs as a non-root user.
+
 ```bash
 docker build -t mood-tracker .
-docker run -p 8080:8080 mood-tracker
+
+docker run --rm \
+  --env-file .env \
+  -p 8080:8080 \
+  mood-tracker
 ```
 
-## Contributing
+## Engineering Roadmap
 
-Contributions are welcome! Please fork the repository and submit a pull request.
+The current implementation is a deployed portfolio MVP. The next engineering priorities are:
+
+- Expand automated coverage with unit, MockMvc, repository, and Testcontainers integration tests
+- Harden account recovery and resource-ownership authorization
+- Replace the in-memory JWT blacklist with a shared TTL store such as Redis
+- Extract the OpenRouter HTTP client, prompt builders, and response validation into dedicated components
+- Add Resilience4j circuit breaking, retry jitter, rate limiting, and provider metrics
+- Move long-running AI generation to an asynchronous job workflow
+- Add OpenAPI documentation and consistent RFC 9457 problem responses
+- Introduce analysis history, prompt versioning, selected-model metadata, and token/cost observability
+- Add privacy controls for data retention, export, deletion, and AI-provider consent
 
 ## Author
 
-**Created by**: Emir Totić • *Backend: Java/Spring Boot, AI integrations*
+**Emir Totić** — Java / Spring Boot backend development and AI service integrations
