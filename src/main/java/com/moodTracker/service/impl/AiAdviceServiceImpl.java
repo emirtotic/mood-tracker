@@ -115,7 +115,12 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 """.formatted(payload);
 
         // 1. attempt – better free model
-        Advice adv = callOpenRouterOnce("meta-llama/llama-3.1-8b-instruct:free", prompt, 0.6, 500);
+        Advice adv = callOpenRouterOnce(
+                "openrouter/free",
+                prompt,
+                0.6,
+                500
+        );
         // 2. fallback – second free model, if the first didn't respond well
         if (adv == null || adv.summary.isBlank() || adv.suggestions.stream().allMatch(String::isBlank)) {
             adv = callOpenRouterOnce("mistralai/mistral-7b-instruct:free", prompt, 0.7, 600);
@@ -274,16 +279,33 @@ public class AiAdviceServiceImpl implements AiAdviceService {
     }
 
     @SuppressWarnings("unchecked") // I know I’m doing an unchecked conversion/cast here so don’t report a warning :)
-    private Advice callOpenRouterOnce(String model, String prompt, double temperature, int maxTokens) {
+    private Advice callOpenRouterOnce(
+            String model,
+            String prompt,
+            double temperature,
+            int maxTokens
+    ) {
         Map<String, Object> body = Map.of(
                 "model", model,
                 "temperature", temperature,
                 "max_tokens", maxTokens,
-                "response_format", Map.of("type", "json_object"),
+                "response_format", Map.of(
+                        "type", "json_object"
+                ),
                 "messages", List.of(
-                        Map.of("role", "system",
-                                "content", "Respond only with valid JSON object, without text outsife of JSON."),
-                        Map.of("role", "user", "content", prompt)
+                        Map.of(
+                                "role", "system",
+                                "content", """
+                                    Return only a valid JSON object.
+                                    The JSON must contain:
+                                    - summary: non-empty string
+                                    - suggestions: non-empty array of strings
+                                    """
+                        ),
+                        Map.of(
+                                "role", "user",
+                                "content", prompt
+                        )
                 )
         );
 
@@ -294,27 +316,90 @@ public class AiAdviceServiceImpl implements AiAdviceService {
         headers.add("X-Title", title);
 
         try {
-            ResponseEntity<String> resp = restTemplate.exchange(
+            ResponseEntity<String> response = restTemplate.exchange(
                     baseUrl + "/chat/completions",
                     HttpMethod.POST,
                     new HttpEntity<>(body, headers),
                     String.class
             );
-            String assistant = extractAssistantContent(resp.getBody());
-            String json = extractJson(assistant);
-            if (json == null || json.isBlank() || "{}".equals(json)) return null;
+
+            log.debug(
+                    "OpenRouter response. Model: {}, status: {}, body: {}",
+                    model,
+                    response.getStatusCode(),
+                    response.getBody()
+            );
+
+            String assistantContent = extractAssistantContent(response.getBody());
+
+            if (assistantContent.isBlank()) {
+                log.warn("OpenRouter returned empty assistant content. Model: {}", model);
+                return null;
+            }
+
+            String json = extractJson(assistantContent);
+
+            if (json.isBlank() || "{}".equals(json)) {
+                log.warn(
+                        "No valid JSON found. Model: {}, assistant content: {}",
+                        model,
+                        assistantContent
+                );
+                return null;
+            }
 
             JsonNode node = om.readTree(json);
-            String summary = node.path("summary").asText("");
+
+            String summary = node.path("summary").asText("").trim();
+
             List<String> suggestions = new ArrayList<>();
-            JsonNode s = node.path("suggestions");
-            if (s.isArray()) s.forEach(n -> {
-                String v = n.asText("").trim();
-                if (!v.isEmpty()) suggestions.add(v);
-            });
-            if (summary.isBlank() || suggestions.isEmpty()) return null;
+            JsonNode suggestionsNode = node.path("suggestions");
+
+            if (suggestionsNode.isArray()) {
+                suggestionsNode.forEach(suggestionNode -> {
+                    String suggestion = suggestionNode.asText("").trim();
+
+                    if (!suggestion.isBlank()) {
+                        suggestions.add(suggestion);
+                    }
+                });
+            }
+
+            if (summary.isBlank() || suggestions.isEmpty()) {
+                log.warn(
+                        "Incomplete AI response. Model: {}, JSON: {}",
+                        model,
+                        json
+                );
+                return null;
+            }
+
             return new Advice(summary, suggestions);
+
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            log.error(
+                    "OpenRouter HTTP error. Model: {}, status: {}, response: {}",
+                    model,
+                    e.getStatusCode(),
+                    e.getResponseBodyAsString(),
+                    e
+            );
+            return null;
+
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.error(
+                    "OpenRouter connection or timeout error. Model: {}",
+                    model,
+                    e
+            );
+            return null;
+
         } catch (Exception e) {
+            log.error(
+                    "OpenRouter response processing failed. Model: {}",
+                    model,
+                    e
+            );
             return null;
         }
     }
