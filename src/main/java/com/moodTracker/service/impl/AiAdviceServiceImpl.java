@@ -1,8 +1,9 @@
 package com.moodTracker.service.impl;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.moodTracker.dto.AiPlan;
 import com.moodTracker.dto.MoodEntryAiResponse;
 import com.moodTracker.dto.MoodEntryDto;
@@ -16,22 +17,45 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class AiAdviceServiceImpl implements AiAdviceService {
 
+    private static final String FREE_MODEL = "openrouter/free";
+
+    private static final int ANALYSIS_MAX_TOKENS = 700;
+    private static final int PLAN_MAX_TOKENS = 1_200;
+    private static final int MAX_ATTEMPTS = 3;
+
+    private static final long INITIAL_RETRY_DELAY_MS = 750L;
+    private static final long MAX_RETRY_DELAY_MS = 5_000L;
+    private static final int MAX_LOGGED_ERROR_BODY_LENGTH = 2_000;
+
     private final RestTemplate restTemplate;
-    private final ObjectMapper om;
+    private final ObjectMapper objectMapper;
     private final MoodEntryService moodEntryService;
     private final UserRepository userRepository;
     private final AiAnalysisRepository aiAnalysisRepository;
@@ -42,322 +66,320 @@ public class AiAdviceServiceImpl implements AiAdviceService {
     @Value("${openrouter.api-key}")
     private String apiKey;
 
-    @Value("${openrouter.referer}")
+    @Value("${openrouter.referer:}")
     private String referer;
 
-    @Value("${openrouter.title}")
+    @Value("${openrouter.title:Mood Tracker}")
     private String title;
-
-    @Value("${openrouter.model}")
-    private String model;
-
-    @Value("${openrouter.fallback-model}")
-    private String fallbackModel;
 
     @Override
     public MoodEntryAiResponse analyze(String email) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
+        validateRequiredFields();
 
-        List<MoodEntryDto> entries = moodEntryService.getEntriesForDate(email).stream()
-                .filter(e -> e.getEntryDate() != null)
+        User user = findUserByEmail(email);
+
+        List<MoodEntryDto> entries = moodEntryService.getEntriesForDate(user.getEmail())
+                .stream()
+                .filter(entry -> entry != null && entry.getEntryDate() != null)
                 .sorted(Comparator.comparing(MoodEntryDto::getEntryDate).reversed())
                 .limit(30)
                 .toList();
 
-        double avg = entries.stream().mapToInt(MoodEntryDto::getMoodScore).average().orElse(0.0);
-        double avgRounded = BigDecimal.valueOf(avg).setScale(1, RoundingMode.HALF_UP).doubleValue();
-
         if (entries.isEmpty()) {
-            return new MoodEntryAiResponse(0.0, "No entries in last 30 days.", List.of());
+            return new MoodEntryAiResponse(
+                    0.0,
+                    "No entries in last 30 days.",
+                    List.of()
+            );
         }
 
-        log.info("Analyzing condition of the user: {} {}", user.getFirstName(), user.getLastName());
+        double average = entries.stream()
+                .mapToInt(MoodEntryDto::getMoodScore)
+                .average()
+                .orElse(0.0);
 
-        // JSON payload for AI model
-        String payload = entries.stream()
-                .map(e -> String.format(Locale.ROOT,
-                        "{\"date\":\"%s\",\"rating\":%d,\"note\":%s}",
-                        e.getEntryDate(), e.getMoodScore(),
-                        e.getNote() == null ? "null" : "\"" + e.getNote().replace("\"", "\\\"") + "\""))
-                .reduce((a, b) -> a + ",\n" + b)
-                .orElse("");
+        double roundedAverage = BigDecimal.valueOf(average)
+                .setScale(1, RoundingMode.HALF_UP)
+                .doubleValue();
 
-        // prompt + mini example (few-shot) + demand the STRICT JSON
-        String prompt = """
-                You are an assistant that outputs STRICT JSON only.
-                    Analyze the mood logs (array of {"date","rating","note"}).
-                    - Detect the dominant language of the notes (by majority of text).
-                    - Summary and suggestions must be in that dominant language ONLY.
-                    - Do not mix languages.
-                Return ONLY a valid JSON object:
-                {
-                  "summary": "<summary in english language, max 120 words, without generic phrases>",
-                  "suggestions": ["three concrete seps, 6–14 words each, without empty strings"]
-                }
-                
-                Example input:
-                [{"date":"2025-08-01","rating":2,"note":"Stress at work, not enough sleep"},
-                 {"date":"2025-08-02","rating":4,"note":"Walk and hanging out with friends"}]
-                Example output:
-                        {
-                          "summary": "Mood fluctuates; sleep and physical activity improve overall tone.",
-                          "suggestions": [
-                            "Set a fixed bedtime for 7–8 hours of sleep",
-                            "Take a 10–15 minute walk after work",
-                            "Record daily stress triggers and responses",
-                            "Schedule a brief social activity twice a week",
-                            "Practice a 5-minute breathing exercise each morning"
-                          ]
-                        }
-                Now analyze these logs and produce JSON only:
-                [%s]
-                """.formatted(payload);
-
-        // 1. attempt – better free model
-        Advice adv = callOpenRouterOnce(
-                "openrouter/free",
-                prompt,
-                0.6,
-                500
+        log.info(
+                "Analyzing {} mood entries for user {}",
+                entries.size(),
+                user.getEmail()
         );
-        // 2. fallback – second free model, if the first didn't respond well
-        if (adv == null || adv.summary.isBlank() || adv.suggestions.stream().allMatch(String::isBlank)) {
-            adv = callOpenRouterOnce("mistralai/mistral-7b-instruct:free", prompt, 0.7, 600);
-        }
-        // 3. Last shot with higher temperature of the same model to eliminate empty strings
-        if (adv == null || adv.summary.isBlank() || adv.suggestions.stream().allMatch(String::isBlank)) {
-            adv = callOpenRouterOnce("meta-llama/llama-3.1-8b-instruct:free", prompt, 0.9, 650);
-        }
 
-        if (adv == null) {
-            log.error("Could not generate summary from Open AI");
-            return new MoodEntryAiResponse(avgRounded, "", List.of());
-        }
+        String entriesJson = createEntriesJson(entries);
+        String prompt = createAnalysisPrompt(entriesJson);
 
-        // Remove empty or duplicated suggestions and trim it to 5
-        List<String> cleaned = adv.suggestions.stream()
-                .map(s -> s == null ? "" : s.trim())
-                .filter(s -> !s.isBlank())
-                .distinct()
-                .limit(5)
-                .toList();
+        Advice advice = generateAdviceWithRetry(prompt);
 
-        MoodEntryAiResponse moodEntryAiResponse = new MoodEntryAiResponse(avgRounded, adv.summary.trim(), cleaned);
+        if (!isValidAdvice(advice)) {
+            log.error(
+                    "Mood analysis could not be generated for user {} after {} attempts",
+                    user.getEmail(),
+                    MAX_ATTEMPTS
+            );
 
-        Optional<AiAnalysis> previousAdvice = aiAnalysisRepository.findByUserId(user.getId());
-
-        if (previousAdvice.isEmpty()) {
-            AiAnalysis response = AiAnalysis.builder()
-                    .user(user)
-                    .average(BigDecimal.valueOf(avgRounded))
-                    .summary(adv.summary)
-                    .suggestions(List.of(String.valueOf(cleaned)))
-                    .createdAt(LocalDateTime.now())
-                    .build();
-            log.info("Creating the AI response for {}", user.getEmail());
-
-            aiAnalysisRepository.save(response);
-        } else {
-            AiAnalysis existing = previousAdvice.get();
-            existing.setAverage(BigDecimal.valueOf(avgRounded));
-            existing.setSummary(adv.summary.trim());
-            existing.setSuggestions(cleaned);
-            existing.setCreatedAt(LocalDateTime.now());
-
-            log.info("Updating AI response for {}", user.getEmail());
-            aiAnalysisRepository.save(existing);
+            return new MoodEntryAiResponse(
+                    roundedAverage,
+                    "",
+                    List.of()
+            );
         }
 
-        return moodEntryAiResponse;
+        String cleanedSummary = advice.summary().trim();
+        List<String> cleanedSuggestions = cleanSuggestions(advice.suggestions());
+
+        if (cleanedSuggestions.isEmpty()) {
+            log.error(
+                    "Mood analysis contained no usable suggestions for user {}",
+                    user.getEmail()
+            );
+
+            return new MoodEntryAiResponse(
+                    roundedAverage,
+                    cleanedSummary,
+                    List.of()
+            );
+        }
+
+        saveOrUpdateAnalysis(
+                user,
+                roundedAverage,
+                cleanedSummary,
+                cleanedSuggestions
+        );
+
+        return new MoodEntryAiResponse(
+                roundedAverage,
+                cleanedSummary,
+                cleanedSuggestions
+        );
     }
 
     @Override
     public AiPlan generatePlan(String email) {
+        validateRequiredFields();
 
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
+        User user = findUserByEmail(email);
 
-        AiAnalysis a = aiAnalysisRepository.findByUserId(user.getId())
-                .orElseThrow(() -> new IllegalStateException("No saved AI analysis for user " + user.getId()));
+        AiAnalysis analysis = aiAnalysisRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "No saved AI analysis for user " + user.getId()
+                ));
 
-        log.info("Generating the plan from Open AI for {} {}", user.getFirstName(), user.getLastName());
+        validateSavedAnalysis(analysis);
+
+        log.info("Generating AI plan for user {}", user.getEmail());
 
         String language = "en";
         int days = 7;
+        String target = analysis.getAverage().doubleValue() >= 4.0
+                ? "maintain"
+                : "improve";
 
-        String target = a.getAverage().doubleValue() >= 4.0 ? "maintain" : "improve";
+        String suggestions = analysis.getSuggestions()
+                .stream()
+                .filter(suggestion -> suggestion != null && !suggestion.isBlank())
+                .map(String::trim)
+                .map(suggestion -> "• " + suggestion)
+                .collect(Collectors.joining("\n"));
 
-        String bullets = a.getSuggestions().stream()
-                .map(s -> "• " + s)
-                .collect(java.util.stream.Collectors.joining("\n"));
+        if (suggestions.isBlank()) {
+            throw new IllegalStateException(
+                    "Saved AI analysis has no usable suggestions"
+            );
+        }
 
         String dayLabel = "en".equalsIgnoreCase(language) ? "Day" : "Dan";
 
         String prompt = """
                 Language: %s
                 Horizon days: %d
-                Target: %s  // maintain | improve
-                
+                Target: %s
+
                 Analysis:
                 average = %.1f
                 summary = %s
                 suggestions:
                 %s
-                
+
                 Task:
-                Create a %d-day plan as PLAIN TEXT in %s, labeled "%s 1" to "%s %d".
-                Each day must have 3–5 actionable bullet points (<= 15 words each) and ONE short reflection question.
+                Create a %d-day wellbeing plan as plain text in %s.
+                Label sections from "%s 1" through "%s %d".
+
+                Each day must contain:
+                - 3 to 5 concrete and actionable bullet points
+                - no more than 15 words per bullet point
+                - one short reflection question
+
                 Constraints:
-                - Use the suggestions above as backbone.
-                - Practical, supportive tone. No medical diagnoses or alarms.
-                - If target=maintain: focus on sustaining good habits. If improve: gentle recovery steps.
-                - Output PLAIN TEXT only (no JSON, no code fences, no extra meta text).
+                - Use the supplied analysis and suggestions as the backbone.
+                - Keep the tone practical and supportive.
+                - Do not provide medical diagnoses.
+                - Do not use alarming or fear-based language.
+                - When target is "maintain", focus on preserving good habits.
+                - When target is "improve", focus on gentle recovery steps.
+                - Return plain text only.
+                - Do not return JSON.
+                - Do not use code fences.
+                - Do not include meta commentary.
                 """.formatted(
-                language, days, target,
-                a.getAverage().doubleValue(), a.getSummary(), bullets,
-                days, language, dayLabel, dayLabel, days
+                language,
+                days,
+                target,
+                analysis.getAverage().doubleValue(),
+                analysis.getSummary().trim(),
+                suggestions,
+                days,
+                language,
+                dayLabel,
+                dayLabel,
+                days
         );
 
-        // candidates: primary + fallback from properties + extra :free models
-        List<String> candidates = new ArrayList<>();
-        if (model != null && !model.isBlank()) candidates.add(model.trim());
-        if (fallbackModel != null && !fallbackModel.isBlank()) candidates.add(fallbackModel.trim());
-        candidates.addAll(List.of(
-                "meta-llama/llama-3.2-3b-instruct:free",
-                "mistralai/mistral-7b-instruct:free",
-                "qwen/qwen2.5-7b-instruct:free"
-        ));
-
-        // remove duplicates and empty spaces
-        candidates = candidates.stream().filter(s -> s != null && !s.isBlank()).distinct().toList();
-
-        String planText = null;
-        for (String m : candidates) {
-            try {
-                planText = callOpenRouterText(m, prompt, 0.8, 1100);
-
-                if (planText != null && !planText.isBlank()) {
-                    log.warn("Plan from AI is generated successfully...");
-                } else {
-                    break;
-                }
-            } catch (org.springframework.web.client.HttpClientErrorException e) {
-                int sc = e.getStatusCode().value();
-                if (sc == 404 || sc == 400 || sc == 429) {
-                    log.warn("Response Status Code from AI is not 200. Trying with different model...");
-                    continue;
-                }
-                throw e;
-            } catch (org.springframework.web.client.ResourceAccessException timeout) {
-                log.warn("Timeout for AI Response. Trying with different model...");
-                continue;
-            }
-        }
+        String planText = generatePlanWithRetry(prompt);
 
         if (planText == null || planText.isBlank()) {
-            log.error("Plan generation temporarily unavailable. Please try again shortly.");
-            throw new IllegalStateException("Plan generation temporarily unavailable. Please try again shortly.");
+            log.error(
+                    "Plan generation failed for user {} after {} attempts",
+                    user.getEmail(),
+                    MAX_ATTEMPTS
+            );
+
+            throw new IllegalStateException(
+                    "Plan generation temporarily unavailable. Please try again shortly."
+            );
         }
 
         AiPlan plan = new AiPlan();
         plan.setResponse(planText.trim());
-        log.info("\nPlan generated: \n{}", plan.getResponse());
+
+        log.info("AI plan generated successfully for user {}", user.getEmail());
+
         return plan;
     }
 
-    /* ===================== Helpers ===================== */
+    private Advice generateAdviceWithRetry(String prompt) {
+        long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
-    private static class Advice {
-        final String summary;
-        final List<String> suggestions;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            double temperature = switch (attempt) {
+                case 1 -> 0.4;
+                case 2 -> 0.5;
+                default -> 0.6;
+            };
 
-        Advice(String summary, List<String> suggestions) {
-            this.summary = summary;
-            this.suggestions = suggestions;
+            log.info(
+                    "Requesting AI analysis with model {}, attempt {}/{}",
+                    FREE_MODEL,
+                    attempt,
+                    MAX_ATTEMPTS
+            );
+
+            OpenRouterResult result = callOpenRouterForAnalysis(
+                    prompt,
+                    temperature,
+                    ANALYSIS_MAX_TOKENS
+            );
+
+            if (result.advice() != null && isValidAdvice(result.advice())) {
+                return result.advice();
+            }
+
+            if (!result.retryable() || attempt == MAX_ATTEMPTS) {
+                return null;
+            }
+
+            retryDelayMs = resolveRetryDelay(result.retryAfterMillis(), retryDelayMs);
+            sleepBeforeRetry(retryDelayMs);
+            retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
         }
+
+        return null;
     }
 
-    @SuppressWarnings("unchecked") // I know I’m doing an unchecked conversion/cast here so don’t report a warning :)
-    private Advice callOpenRouterOnce(
-            String model,
+    private OpenRouterResult callOpenRouterForAnalysis(
             String prompt,
             double temperature,
             int maxTokens
     ) {
-        Map<String, Object> body = Map.of(
-                "model", model,
-                "temperature", temperature,
-                "max_tokens", maxTokens,
-                "response_format", Map.of(
-                        "type", "json_object"
-                ),
-                "messages", List.of(
-                        Map.of(
-                                "role", "system",
-                                "content", """
-                                    Return only a valid JSON object.
-                                    The JSON must contain:
-                                    - summary: non-empty string
-                                    - suggestions: non-empty array of strings
-                                    """
-                        ),
-                        Map.of(
-                                "role", "user",
-                                "content", prompt
-                        )
-                )
+        ObjectNode requestBody = createBaseRequestBody(
+                temperature,
+                maxTokens
         );
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(apiKey);
-        headers.add("HTTP-Referer", referer);
-        headers.add("X-Title", title);
+        ObjectNode responseFormat = requestBody.putObject("response_format");
+        responseFormat.put("type", "json_object");
+
+        addMessage(
+                requestBody,
+                "system",
+                """
+                Return only one valid JSON object.
+
+                The object must contain:
+                - "summary": a non-empty string
+                - "suggestions": an array containing exactly five non-empty strings
+
+                Do not include Markdown.
+                Do not include code fences.
+                Do not include any text outside the JSON object.
+                """
+        );
+
+        addMessage(requestBody, "user", prompt);
+
+        HttpCallResult httpResult = executeOpenRouterRequest(
+                requestBody,
+                "analysis"
+        );
+
+        if (httpResult.body() == null || httpResult.body().isBlank()) {
+            return new OpenRouterResult(
+                    null,
+                    httpResult.retryable(),
+                    httpResult.retryAfterMillis()
+            );
+        }
 
         try {
-            ResponseEntity<String> response = restTemplate.exchange(
-                    baseUrl + "/chat/completions",
-                    HttpMethod.POST,
-                    new HttpEntity<>(body, headers),
-                    String.class
-            );
-
-            log.debug(
-                    "OpenRouter response. Model: {}, status: {}, body: {}",
-                    model,
-                    response.getStatusCode(),
-                    response.getBody()
-            );
-
-            String assistantContent = extractAssistantContent(response.getBody());
+            String assistantContent = extractAssistantContent(httpResult.body());
 
             if (assistantContent.isBlank()) {
-                log.warn("OpenRouter returned empty assistant content. Model: {}", model);
-                return null;
+                log.warn("OpenRouter returned empty assistant content for analysis");
+
+                return new OpenRouterResult(
+                        null,
+                        true,
+                        httpResult.retryAfterMillis()
+                );
             }
 
             String json = extractJson(assistantContent);
 
-            if (json.isBlank() || "{}".equals(json)) {
-                log.warn(
-                        "No valid JSON found. Model: {}, assistant content: {}",
-                        model,
-                        assistantContent
+            if ("{}".equals(json)) {
+                log.warn("OpenRouter analysis response did not contain a JSON object");
+
+                return new OpenRouterResult(
+                        null,
+                        true,
+                        httpResult.retryAfterMillis()
                 );
-                return null;
             }
 
-            JsonNode node = om.readTree(json);
+            JsonNode result = objectMapper.readTree(json);
 
-            String summary = node.path("summary").asText("").trim();
+            String summary = result.path("summary")
+                    .asText("")
+                    .trim();
 
             List<String> suggestions = new ArrayList<>();
-            JsonNode suggestionsNode = node.path("suggestions");
+            JsonNode suggestionsNode = result.path("suggestions");
 
             if (suggestionsNode.isArray()) {
-                suggestionsNode.forEach(suggestionNode -> {
-                    String suggestion = suggestionNode.asText("").trim();
+                suggestionsNode.forEach(node -> {
+                    String suggestion = node.asText("").trim();
 
                     if (!suggestion.isBlank()) {
                         suggestions.add(suggestion);
@@ -365,102 +387,593 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 });
             }
 
-            if (summary.isBlank() || suggestions.isEmpty()) {
-                log.warn(
-                        "Incomplete AI response. Model: {}, JSON: {}",
-                        model,
-                        json
-                );
-                return null;
-            }
+            Advice advice = new Advice(summary, suggestions);
 
-            return new Advice(summary, suggestions);
-
-        } catch (org.springframework.web.client.HttpStatusCodeException e) {
-            log.error(
-                    "OpenRouter HTTP error. Model: {}, status: {}, response: {}",
-                    model,
-                    e.getStatusCode(),
-                    e.getResponseBodyAsString(),
-                    e
+            return new OpenRouterResult(
+                    isValidAdvice(advice) ? advice : null,
+                    true,
+                    httpResult.retryAfterMillis()
             );
-            return null;
-
-        } catch (org.springframework.web.client.ResourceAccessException e) {
-            log.error(
-                    "OpenRouter connection or timeout error. Model: {}",
-                    model,
-                    e
-            );
-            return null;
 
         } catch (Exception e) {
-            log.error(
-                    "OpenRouter response processing failed. Model: {}",
-                    model,
-                    e
+            log.error("Failed to parse OpenRouter analysis response", e);
+
+            return new OpenRouterResult(
+                    null,
+                    true,
+                    httpResult.retryAfterMillis()
             );
-            return null;
         }
     }
 
-    private String callOpenRouterText(String model, String prompt, double temperature, int maxTokens) {
-        Map<String, Object> body = Map.of(
-                "model", model,
-                "temperature", temperature,
-                "max_tokens", maxTokens,
-                "messages", List.of(
-                        Map.of("role", "system",
-                                "content", "You are a supportive wellbeing coach. Output PLAIN TEXT only, no JSON, no code fences."),
-                        Map.of("role", "user", "content", prompt)
-                )
-        );
+    private String generatePlanWithRetry(String prompt) {
+        long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
-        HttpHeaders h = new HttpHeaders();
-        h.setContentType(MediaType.APPLICATION_JSON);
-        h.setBearerAuth(apiKey);
-        h.add("HTTP-Referer", referer);
-        h.add("X-Title", title);
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            double temperature = switch (attempt) {
+                case 1 -> 0.6;
+                case 2 -> 0.7;
+                default -> 0.8;
+            };
 
-        ResponseEntity<String> resp = restTemplate.exchange(
-                baseUrl + "/chat/completions",
-                HttpMethod.POST,
-                new HttpEntity<>(body, h),
-                String.class
-        );
-        return extractAssistantContent(resp.getBody());
+            log.info(
+                    "Requesting AI plan with model {}, attempt {}/{}",
+                    FREE_MODEL,
+                    attempt,
+                    MAX_ATTEMPTS
+            );
+
+            TextResult result = callOpenRouterForText(
+                    prompt,
+                    temperature,
+                    PLAN_MAX_TOKENS
+            );
+
+            if (result.text() != null && !result.text().isBlank()) {
+                return result.text().trim();
+            }
+
+            if (!result.retryable() || attempt == MAX_ATTEMPTS) {
+                return null;
+            }
+
+            retryDelayMs = resolveRetryDelay(result.retryAfterMillis(), retryDelayMs);
+            sleepBeforeRetry(retryDelayMs);
+            retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+        }
+
+        return null;
     }
 
-    /**
-     * Retrieve assistant message content from OpenRouter/OpenAI response.
-     */
-    private String extractAssistantContent(String body) {
-        if (body == null || body.isBlank()) return "";
+    private TextResult callOpenRouterForText(
+            String prompt,
+            double temperature,
+            int maxTokens
+    ) {
+        ObjectNode requestBody = createBaseRequestBody(
+                temperature,
+                maxTokens
+        );
+
+        addMessage(
+                requestBody,
+                "system",
+                """
+                You are a supportive wellbeing coach.
+                Return plain text only.
+                Do not return JSON.
+                Do not use code fences.
+                """
+        );
+
+        addMessage(requestBody, "user", prompt);
+
+        HttpCallResult httpResult = executeOpenRouterRequest(
+                requestBody,
+                "plan"
+        );
+
+        if (httpResult.body() == null || httpResult.body().isBlank()) {
+            return new TextResult(
+                    null,
+                    httpResult.retryable(),
+                    httpResult.retryAfterMillis()
+            );
+        }
+
+        String assistantContent = extractAssistantContent(httpResult.body());
+
+        if (assistantContent.isBlank()) {
+            log.warn("OpenRouter returned empty assistant content for plan");
+
+            return new TextResult(
+                    null,
+                    true,
+                    httpResult.retryAfterMillis()
+            );
+        }
+
+        return new TextResult(
+                assistantContent.trim(),
+                false,
+                0L
+        );
+    }
+
+    private ObjectNode createBaseRequestBody(
+            double temperature,
+            int maxTokens
+    ) {
+        ObjectNode requestBody = objectMapper.createObjectNode();
+
+        requestBody.put("model", FREE_MODEL);
+        requestBody.put("temperature", temperature);
+        requestBody.put("max_tokens", maxTokens);
+        requestBody.putArray("messages");
+
+        return requestBody;
+    }
+
+    private void addMessage(
+            ObjectNode requestBody,
+            String role,
+            String content
+    ) {
+        ArrayNode messages = (ArrayNode) requestBody.get("messages");
+
+        ObjectNode message = messages.addObject();
+        message.put("role", role);
+        message.put("content", content);
+    }
+
+    private HttpCallResult executeOpenRouterRequest(
+            JsonNode requestBody,
+            String operation
+    ) {
         try {
-            Map<String, Object> root = om.readValue(body, new TypeReference<>() {
-            });
-            List<Map<String, Object>> choices = (List<Map<String, Object>>) root.get("choices");
-            if (choices == null || choices.isEmpty()) return "";
-            Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-            return message == null ? "" : String.valueOf(message.getOrDefault("content", ""));
+            ResponseEntity<String> response = restTemplate.exchange(
+                    createChatCompletionsUrl(),
+                    HttpMethod.POST,
+                    new HttpEntity<>(requestBody, createHeaders()),
+                    String.class
+            );
+
+            log.info(
+                    "OpenRouter {} request completed with status {}",
+                    operation,
+                    response.getStatusCode().value()
+            );
+
+            logSelectedModel(operation, response.getBody());
+
+            return new HttpCallResult(
+                    response.getBody(),
+                    false,
+                    0L
+            );
+
+        } catch (HttpStatusCodeException e) {
+            HttpStatusCode statusCode = e.getStatusCode();
+            boolean retryable = isRetryableStatus(statusCode.value());
+            long retryAfterMillis = extractRetryAfterMillis(e.getResponseHeaders());
+
+            log.error(
+                    "OpenRouter {} request failed. Status: {}, retryable: {}, response: {}",
+                    operation,
+                    statusCode.value(),
+                    retryable,
+                    truncateForLog(e.getResponseBodyAsString())
+            );
+
+            return new HttpCallResult(
+                    null,
+                    retryable,
+                    retryAfterMillis
+            );
+
+        } catch (ResourceAccessException e) {
+            log.error(
+                    "OpenRouter {} request failed because of a connection or timeout error: {}",
+                    operation,
+                    e.getMessage()
+            );
+
+            return new HttpCallResult(
+                    null,
+                    true,
+                    0L
+            );
+
         } catch (Exception e) {
+            log.error(
+                    "Unexpected OpenRouter {} request failure",
+                    operation,
+                    e
+            );
+
+            return new HttpCallResult(
+                    null,
+                    false,
+                    0L
+            );
+        }
+    }
+
+    private HttpHeaders createHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey.trim());
+
+        if (referer != null && !referer.isBlank()) {
+            headers.add("HTTP-Referer", referer.trim());
+        }
+
+        if (title != null && !title.isBlank()) {
+            headers.add("X-Title", title.trim());
+        }
+
+        return headers;
+    }
+
+    private String createChatCompletionsUrl() {
+        String normalizedBaseUrl = baseUrl.trim();
+
+        while (normalizedBaseUrl.endsWith("/")) {
+            normalizedBaseUrl = normalizedBaseUrl.substring(
+                    0,
+                    normalizedBaseUrl.length() - 1
+            );
+        }
+
+        return normalizedBaseUrl + "/chat/completions";
+    }
+
+    private void saveOrUpdateAnalysis(
+            User user,
+            double roundedAverage,
+            String summary,
+            List<String> suggestions
+    ) {
+        Optional<AiAnalysis> previousAnalysis =
+                aiAnalysisRepository.findByUserId(user.getId());
+
+        AiAnalysis analysis = previousAnalysis.orElseGet(
+                () -> AiAnalysis.builder()
+                        .user(user)
+                        .build()
+        );
+
+        analysis.setAverage(BigDecimal.valueOf(roundedAverage));
+        analysis.setSummary(summary);
+        analysis.setSuggestions(new ArrayList<>(suggestions));
+        analysis.setCreatedAt(LocalDateTime.now());
+
+        aiAnalysisRepository.save(analysis);
+
+        log.info(
+                "{} AI analysis for user {}",
+                previousAnalysis.isPresent() ? "Updated" : "Created",
+                user.getEmail()
+        );
+    }
+
+    private String createEntriesJson(List<MoodEntryDto> entries) {
+        ArrayNode entriesArray = objectMapper.createArrayNode();
+
+        for (MoodEntryDto entry : entries) {
+            ObjectNode entryNode = entriesArray.addObject();
+
+            entryNode.put("date", entry.getEntryDate().toString());
+            entryNode.put("rating", entry.getMoodScore());
+
+            if (entry.getNote() == null || entry.getNote().isBlank()) {
+                entryNode.putNull("note");
+            } else {
+                entryNode.put("note", entry.getNote().trim());
+            }
+        }
+
+        return entriesArray.toString();
+    }
+
+    private String createAnalysisPrompt(String entriesJson) {
+        return """
+                Analyze the supplied mood logs.
+
+                Instructions:
+                - Detect the dominant language used in the notes.
+                - Write the summary and every suggestion in that language.
+                - Do not mix languages.
+                - Base the analysis only on the supplied entries.
+                - Do not make medical diagnoses.
+                - The summary must contain no more than 120 words.
+                - Return exactly five concrete suggestions.
+                - Each suggestion must contain between 6 and 14 words.
+                - Avoid generic, duplicated, or empty suggestions.
+
+                Return only this JSON structure:
+
+                {
+                  "summary": "non-empty summary",
+                  "suggestions": [
+                    "suggestion one",
+                    "suggestion two",
+                    "suggestion three",
+                    "suggestion four",
+                    "suggestion five"
+                  ]
+                }
+
+                Mood logs:
+                %s
+                """.formatted(entriesJson);
+    }
+
+    private String extractAssistantContent(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return "";
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode choices = root.path("choices");
+
+            if (!choices.isArray() || choices.isEmpty()) {
+                log.warn("OpenRouter response does not contain choices");
+                return "";
+            }
+
+            JsonNode content = choices.get(0)
+                    .path("message")
+                    .path("content");
+
+            if (content.isTextual()) {
+                return content.asText("").trim();
+            }
+
+            if (content.isArray()) {
+                StringBuilder result = new StringBuilder();
+
+                for (JsonNode part : content) {
+                    String text = part.path("text").asText("");
+
+                    if (!text.isBlank()) {
+                        if (result.length() > 0) {
+                            result.append('\n');
+                        }
+
+                        result.append(text);
+                    }
+                }
+
+                return result.toString().trim();
+            }
+
+            return "";
+
+        } catch (Exception e) {
+            log.error("Failed to parse OpenRouter response envelope", e);
             return "";
         }
     }
 
-    /**
-     * Remove ```json fence-ove and return contend of JSON object if exist.
-     */
     private static String extractJson(String content) {
-        if (content == null) return "{}";
-        String c = content.trim();
-        if (c.startsWith("```")) {
-            int first = c.indexOf('{');
-            int last = c.lastIndexOf('}');
-            if (first >= 0 && last > first) return c.substring(first, last + 1);
+        if (content == null || content.isBlank()) {
+            return "{}";
         }
-        int first = c.indexOf('{');
-        int last = c.lastIndexOf('}');
-        return (first >= 0 && last > first) ? c.substring(first, last + 1) : "{}";
+
+        String cleaned = content.trim();
+        int firstBrace = cleaned.indexOf('{');
+        int lastBrace = cleaned.lastIndexOf('}');
+
+        if (firstBrace < 0 || lastBrace <= firstBrace) {
+            return "{}";
+        }
+
+        return cleaned.substring(firstBrace, lastBrace + 1);
+    }
+
+    private User findUserByEmail(String email) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("Email must not be empty");
+        }
+
+        String normalizedEmail = email.trim();
+
+        return userRepository.findByEmail(normalizedEmail)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "User not found: " + normalizedEmail
+                ));
+    }
+
+    private void validateRequiredFields() {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalStateException(
+                    "OpenRouter base URL is not available"
+            );
+        }
+
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException(
+                    "OpenRouter API key is not available"
+            );
+        }
+    }
+
+    private void validateSavedAnalysis(AiAnalysis analysis) {
+        if (analysis.getAverage() == null) {
+            throw new IllegalStateException(
+                    "Saved AI analysis has no average value"
+            );
+        }
+
+        if (analysis.getSummary() == null || analysis.getSummary().isBlank()) {
+            throw new IllegalStateException(
+                    "Saved AI analysis has no summary"
+            );
+        }
+
+        if (analysis.getSuggestions() == null || analysis.getSuggestions().isEmpty()) {
+            throw new IllegalStateException(
+                    "Saved AI analysis has no suggestions"
+            );
+        }
+    }
+
+    private boolean isValidAdvice(Advice advice) {
+        return advice != null
+                && advice.summary() != null
+                && !advice.summary().isBlank()
+                && advice.suggestions() != null
+                && advice.suggestions()
+                .stream()
+                .anyMatch(suggestion ->
+                        suggestion != null && !suggestion.isBlank()
+                );
+    }
+
+    private List<String> cleanSuggestions(List<String> suggestions) {
+        if (suggestions == null || suggestions.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> uniqueSuggestions = new LinkedHashSet<>();
+
+        for (String suggestion : suggestions) {
+            if (suggestion == null) {
+                continue;
+            }
+
+            String cleaned = suggestion.trim();
+
+            if (!cleaned.isBlank()) {
+                uniqueSuggestions.add(cleaned);
+            }
+
+            if (uniqueSuggestions.size() == 5) {
+                break;
+            }
+        }
+
+        return new ArrayList<>(uniqueSuggestions);
+    }
+
+    private boolean isRetryableStatus(int statusCode) {
+        return statusCode == 408
+                || statusCode == 429
+                || statusCode == 500
+                || statusCode == 502
+                || statusCode == 503
+                || statusCode == 504
+                || statusCode == 529;
+    }
+
+    private long extractRetryAfterMillis(HttpHeaders responseHeaders) {
+        if (responseHeaders == null) {
+            return 0L;
+        }
+
+        String retryAfter = responseHeaders.getFirst(HttpHeaders.RETRY_AFTER);
+
+        if (retryAfter == null || retryAfter.isBlank()) {
+            return 0L;
+        }
+
+        try {
+            long seconds = Long.parseLong(retryAfter.trim());
+            return Math.min(seconds * 1_000L, MAX_RETRY_DELAY_MS);
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    private long resolveRetryDelay(
+            long retryAfterMillis,
+            long fallbackDelayMillis
+    ) {
+        if (retryAfterMillis > 0L) {
+            return Math.min(retryAfterMillis, MAX_RETRY_DELAY_MS);
+        }
+
+        return Math.min(fallbackDelayMillis, MAX_RETRY_DELAY_MS);
+    }
+
+    private void sleepBeforeRetry(long delayMilliseconds) {
+        try {
+            Thread.sleep(delayMilliseconds);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("OpenRouter retry wait was interrupted");
+        }
+    }
+
+    private void logSelectedModel(
+            String operation,
+            String responseBody
+    ) {
+        if (!log.isInfoEnabled()
+                || responseBody == null
+                || responseBody.isBlank()) {
+            return;
+        }
+
+        try {
+            String selectedModel = objectMapper.readTree(responseBody)
+                    .path("model")
+                    .asText("");
+
+            if (!selectedModel.isBlank()) {
+                log.info(
+                        "OpenRouter selected model {} for {}",
+                        selectedModel,
+                        operation
+                );
+            }
+        } catch (Exception ignored) {
+            log.debug(
+                    "Could not read selected model from OpenRouter response"
+            );
+        }
+    }
+
+    private String truncateForLog(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+
+        if (value.length() <= MAX_LOGGED_ERROR_BODY_LENGTH) {
+            return value;
+        }
+
+        return value.substring(0, MAX_LOGGED_ERROR_BODY_LENGTH)
+                + "...[truncated]";
+    }
+
+    private record Advice(
+            String summary,
+            List<String> suggestions
+    ) {
+    }
+
+    private record HttpCallResult(
+            String body,
+            boolean retryable,
+            long retryAfterMillis
+    ) {
+    }
+
+    private record OpenRouterResult(
+            Advice advice,
+            boolean retryable,
+            long retryAfterMillis
+    ) {
+    }
+
+    private record TextResult(
+            String text,
+            boolean retryable,
+            long retryAfterMillis
+    ) {
     }
 }
