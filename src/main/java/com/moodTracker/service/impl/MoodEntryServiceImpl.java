@@ -150,11 +150,11 @@ public class MoodEntryServiceImpl implements MoodEntryService {
         var user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
 
-        Optional<MoodEntry> mood = moodRepo.findById(id);
+        Optional<MoodEntry> mood = moodRepo.findByIdAndUserId(id, user.getId());
 
         if (mood.isPresent()) {
             log.info("Deleting the entry with id {}", id);
-            moodRepo.deleteById(id);
+            moodRepo.delete(mood.get());
         } else {
             log.error("Record with provided ID doesn't exist.");
             throw new BadRequestException("Record with provided ID doesn't exist.");

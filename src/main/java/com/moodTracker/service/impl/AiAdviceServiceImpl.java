@@ -197,22 +197,22 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 Language: %s
                 Horizon days: %d
                 Target: %s
-
+                
                 Analysis:
                 average = %.1f
                 summary = %s
                 suggestions:
                 %s
-
+                
                 Task:
                 Create a %d-day wellbeing plan as plain text in %s.
                 Label sections from "%s 1" through "%s %d".
-
+                
                 Each day must contain:
                 - 3 to 5 concrete and actionable bullet points
                 - no more than 15 words per bullet point
                 - one short reflection question
-
+                
                 Constraints:
                 - Use the supplied analysis and suggestions as the backbone.
                 - Keep the tone practical and supportive.
@@ -316,16 +316,16 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 requestBody,
                 "system",
                 """
-                Return only one valid JSON object.
-
-                The object must contain:
-                - "summary": a non-empty string
-                - "suggestions": an array containing exactly five non-empty strings
-
-                Do not include Markdown.
-                Do not include code fences.
-                Do not include any text outside the JSON object.
-                """
+                        Return only one valid JSON object.
+                        
+                        The object must contain:
+                        - "summary": a non-empty string
+                        - "suggestions": an array containing exactly five non-empty strings
+                        
+                        Do not include Markdown.
+                        Do not include code fences.
+                        Do not include any text outside the JSON object.
+                        """
         );
 
         addMessage(requestBody, "user", prompt);
@@ -459,11 +459,11 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 requestBody,
                 "system",
                 """
-                You are a supportive wellbeing coach.
-                Return plain text only.
-                Do not return JSON.
-                Do not use code fences.
-                """
+                        You are a supportive wellbeing coach.
+                        Return plain text only.
+                        Do not return JSON.
+                        Do not use code fences.
+                        """
         );
 
         addMessage(requestBody, "user", prompt);
@@ -680,7 +680,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
     private String createAnalysisPrompt(String entriesJson) {
         return """
                 Analyze the supplied mood logs.
-
+                
                 Instructions:
                 - Detect the dominant language used in the notes.
                 - Write the summary and every suggestion in that language.
@@ -691,9 +691,9 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                 - Return exactly five concrete suggestions.
                 - Each suggestion must contain between 6 and 14 words.
                 - Avoid generic, duplicated, or empty suggestions.
-
+                
                 Return only this JSON structure:
-
+                
                 {
                   "summary": "non-empty summary",
                   "suggestions": [
@@ -704,7 +704,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
                     "suggestion five"
                   ]
                 }
-
+                
                 Mood logs:
                 %s
                 """.formatted(entriesJson);

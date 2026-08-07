@@ -317,26 +317,27 @@ class MoodEntryServiceImplTest {
 
         @Test
         void shouldDeleteExistingEntry() {
+            MoodEntry entry = entry(10L, LocalDate.now(), 3, "Ok");
             when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
-            when(moodEntryRepository.findById(10L))
-                    .thenReturn(Optional.of(entry(10L, LocalDate.now(), 3, "Ok")));
+            when(moodEntryRepository.findByIdAndUserId(10L, USER_ID))
+                    .thenReturn(Optional.of(entry));
 
             String result = service.deleteById(EMAIL, 10L);
 
             assertThat(result).isEqualTo("Entry has been deleted.");
-            verify(moodEntryRepository).deleteById(10L);
+            verify(moodEntryRepository).delete(entry);
         }
 
         @Test
-        void shouldRejectDeleteWhenEntryDoesNotExist() {
+        void shouldRejectDeleteWhenEntryDoesNotBelongToUserOrDoesNotExist() {
             when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
-            when(moodEntryRepository.findById(10L)).thenReturn(Optional.empty());
+            when(moodEntryRepository.findByIdAndUserId(10L, USER_ID)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.deleteById(EMAIL, 10L))
                     .isInstanceOf(BadRequestException.class)
                     .hasMessage("Record with provided ID doesn't exist.");
 
-            verify(moodEntryRepository, never()).deleteById(any());
+            verify(moodEntryRepository, never()).delete(any());
         }
     }
 

@@ -51,7 +51,9 @@ class CustomUserDetailsServiceImplTest {
 
         assertThat(result.getUsername()).isEqualTo(EMAIL);
         assertThat(result.getPassword()).isEqualTo(PASSWORD);
-        assertThat(result.getAuthorities()).isEmpty();
+        assertThat(result.getAuthorities())
+                .extracting("authority")
+                .containsExactly("ROLE_USER");
         assertThat(result.isEnabled()).isTrue();
         assertThat(result.isAccountNonExpired()).isTrue();
         assertThat(result.isAccountNonLocked()).isTrue();

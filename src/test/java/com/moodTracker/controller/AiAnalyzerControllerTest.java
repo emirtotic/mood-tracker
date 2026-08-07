@@ -16,6 +16,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import java.util.List;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -59,7 +60,27 @@ class AiAnalyzerControllerTest {
     }
 
     @Test
-    void shouldPreferExplicitEmailParameter() throws Exception {
+    void shouldIgnoreExplicitEmailParameterForRegularUser() throws Exception {
+        String requestedEmail = "requested@example.com";
+        when(aiAdviceService.analyze(EMAIL)).thenReturn(new MoodEntryAiResponse(
+                3.5,
+                "Your recent mood pattern is stable.",
+                List.of("Take a short walk every afternoon")
+        ));
+
+        mockMvc.perform(post("/ai/analyze")
+                        .with(user(EMAIL))
+                        .param("email", requestedEmail))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.average").value(3.5));
+
+        verify(aiAdviceService).analyze(EMAIL);
+        verify(aiAdviceService, never()).analyze(requestedEmail);
+    }
+
+    @Test
+    @WithMockUser(username = "admin@example.com", roles = "ADMIN")
+    void shouldAllowAdminToAnalyzeExplicitUserEmail() throws Exception {
         String requestedEmail = "requested@example.com";
         when(aiAdviceService.analyze(requestedEmail)).thenReturn(new MoodEntryAiResponse(
                 3.5,
@@ -68,7 +89,6 @@ class AiAnalyzerControllerTest {
         ));
 
         mockMvc.perform(post("/ai/analyze")
-                        .with(user(EMAIL))
                         .param("email", requestedEmail))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.average").value(3.5));

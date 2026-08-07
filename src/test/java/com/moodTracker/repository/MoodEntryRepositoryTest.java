@@ -109,10 +109,14 @@ class MoodEntryRepositoryTest {
                 .role(Role.USER)
                 .build());
         LocalDate date = LocalDate.of(2026, 7, 20);
-        moodEntryRepository.saveAndFlush(entry(date, 4, "A productive day"));
+        MoodEntry savedEntry = moodEntryRepository.saveAndFlush(entry(date, 4, "A productive day"));
 
         assertThat(moodEntryRepository.findByUserIdAndEntryDate(anotherUser.getId(), date))
                 .isEmpty();
+        assertThat(moodEntryRepository.findByIdAndUserId(savedEntry.getId(), anotherUser.getId()))
+                .isEmpty();
+        assertThat(moodEntryRepository.findByIdAndUserId(savedEntry.getId(), user.getId()))
+                .contains(savedEntry);
     }
 
     @Test

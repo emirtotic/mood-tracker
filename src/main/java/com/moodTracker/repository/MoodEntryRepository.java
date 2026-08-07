@@ -11,6 +11,8 @@ import java.util.Optional;
 
 public interface MoodEntryRepository extends JpaRepository<MoodEntry, Long> {
 
+    Optional<MoodEntry> findByIdAndUserId(Long id, Long userId);
+
     Optional<MoodEntry> findByUserIdAndEntryDate(Long userId, LocalDate date);
 
     List<MoodEntry> findAllByUserIdAndEntryDateBetweenOrderByEntryDateDesc(

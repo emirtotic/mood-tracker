@@ -2,7 +2,6 @@ package com.moodTracker.controller;
 
 import com.moodTracker.dto.AiPlanResponse;
 import com.moodTracker.dto.MoodEntryAiResponse;
-import com.moodTracker.entity.User;
 import com.moodTracker.service.AiAdviceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,7 +21,7 @@ public class AiAnalyzerController {
     private final AiAdviceService aiAdviceService;
 
     @PostMapping("/plan")
-    public AiPlanResponse generatePlan(@AuthenticationPrincipal Object principal,
+    public AiPlanResponse generatePlan(@AuthenticationPrincipal UserDetails principal,
                                        @RequestParam(name = "email", required = false) String email) {
         String resolved = resolveEmail(principal, email);
         if (resolved == null || resolved.isBlank()) {
@@ -34,7 +33,7 @@ public class AiAnalyzerController {
 
 
     @PostMapping("/analyze")
-    public MoodEntryAiResponse analyzePost(@AuthenticationPrincipal Object principal,
+    public MoodEntryAiResponse analyzePost(@AuthenticationPrincipal UserDetails principal,
                                            @RequestParam(name = "email", required = false) String email) {
         String resolved = resolveEmail(principal, email);
         if (resolved == null || resolved.isBlank()) {
@@ -44,15 +43,18 @@ public class AiAnalyzerController {
         return aiAdviceService.analyze(resolved);
     }
 
-    private String resolveEmail(Object principal, String emailParam) {
-        if (emailParam != null && !emailParam.isBlank()) return emailParam;
+    private String resolveEmail(UserDetails principal, String emailParam) {
+        if (principal == null) {
+            return null;
+        }
 
-        if (principal instanceof User u && u.getEmail() != null) {
-            return u.getEmail();
+        boolean isAdmin = principal.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+
+        if (isAdmin && emailParam != null && !emailParam.isBlank()) {
+            return emailParam;
         }
-        if (principal instanceof UserDetails ud) {
-            return ud.getUsername();
-        }
-        return null;
+
+        return principal.getUsername();
     }
 }
