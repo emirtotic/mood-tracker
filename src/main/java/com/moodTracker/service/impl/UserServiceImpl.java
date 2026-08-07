@@ -2,20 +2,23 @@ package com.moodTracker.service.impl;
 
 import com.moodTracker.dto.LoginRequest;
 import com.moodTracker.dto.RegisterRequest;
-import com.moodTracker.dto.ResetPasswordRequest;
+import com.moodTracker.dto.ChangePasswordRequest;
 import com.moodTracker.entity.Role;
 import com.moodTracker.entity.User;
+import com.moodTracker.exception.BadRequestException;
 import com.moodTracker.mapper.UserMapper;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.security.JwtService;
 import com.moodTracker.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -60,23 +63,34 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public String changePassword(ResetPasswordRequest request) {
+    @Transactional
+    public void changePassword(
+            String authenticatedEmail,
+            ChangePasswordRequest request
+    ) {
+        User user = userRepository.findByEmail(authenticatedEmail)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
 
-        User user = userRepository.findUserByEmail(request.email())
-                .orElseThrow(() -> new UsernameNotFoundException("User not found."));
-
-        if (user != null) {
-            user.setPassword(passwordEncoder.encode(request.newPassword()));
-            userRepository.save(user);
+        if (!passwordEncoder.matches(
+                request.currentPassword(),
+                user.getPassword()
+        )) {
+            throw new BadCredentialsException(
+                    "Current password is incorrect"
+            );
         }
 
-        StringBuilder sb = new StringBuilder();
+        if (passwordEncoder.matches(
+                request.newPassword(),
+                user.getPassword()
+        )) {
+            throw new BadRequestException(
+                    "New password must be different from current password"
+            );
+        }
 
-        sb.append("Password has been changed for user ")
-                .append(request.email())
-                .append(". Please continue to login page.");
-
-        return sb.toString();
+        user.setPassword(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
     }
 
 

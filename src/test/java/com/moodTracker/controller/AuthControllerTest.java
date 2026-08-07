@@ -12,17 +12,20 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.security.test.context.support.WithMockUser;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -99,22 +102,36 @@ class AuthControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "emir@example.com")
     void shouldChangePassword() throws Exception {
-        when(userService.changePassword(any())).thenReturn(
-                "Password has been changed for user emir@example.com."
-        );
-
         mockMvc.perform(post("/api/auth/change-password")
                         .contentType("application/json")
                         .content("""
                                 {
-                                  "email": "emir@example.com",
+                                  "currentPassword": "password123",
                                   "newPassword": "new-password"
                                 }
                                 """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.token")
-                        .value("Password has been changed for user emir@example.com."));
+                .andExpect(status().isNoContent())
+                .andExpect(content().string(""));
+
+        verify(userService).changePassword(eq("emir@example.com"), any());
+    }
+
+    @Test
+    @WithMockUser(username = "emir@example.com")
+    void shouldRejectInvalidChangePasswordRequest() throws Exception {
+        mockMvc.perform(post("/api/auth/change-password")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "currentPassword": "",
+                                  "newPassword": "short"
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+
+        verify(userService, never()).changePassword(any(), any());
     }
 
     @Test

@@ -3,7 +3,7 @@ package com.moodTracker.controller;
 import com.moodTracker.dto.JwtResponse;
 import com.moodTracker.dto.LoginRequest;
 import com.moodTracker.dto.RegisterRequest;
-import com.moodTracker.dto.ResetPasswordRequest;
+import com.moodTracker.dto.ChangePasswordRequest;
 import com.moodTracker.security.JwtService;
 import com.moodTracker.security.TokenBlacklistService;
 import com.moodTracker.service.UserService;
@@ -11,6 +11,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -39,9 +41,10 @@ public class AuthController {
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE
     )
-    public ResponseEntity<JwtResponse> changePassword(@Valid @RequestBody ResetPasswordRequest request) {
-        String token = userService.changePassword(request);
-        return ResponseEntity.ok(new JwtResponse(token));
+    public ResponseEntity<Void> changePassword(@AuthenticationPrincipal UserDetails principal,
+                                               @Valid @RequestBody ChangePasswordRequest request) {
+        userService.changePassword(principal.getUsername(), request);
+        return ResponseEntity.noContent().build();
     }
 
 
@@ -57,4 +60,3 @@ public class AuthController {
     }
 
 }
-

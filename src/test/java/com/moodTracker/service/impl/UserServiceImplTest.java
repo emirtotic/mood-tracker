@@ -2,7 +2,8 @@ package com.moodTracker.service.impl;
 
 import com.moodTracker.dto.LoginRequest;
 import com.moodTracker.dto.RegisterRequest;
-import com.moodTracker.dto.ResetPasswordRequest;
+import com.moodTracker.dto.ChangePasswordRequest;
+import com.moodTracker.exception.BadRequestException;
 import com.moodTracker.entity.Role;
 import com.moodTracker.entity.User;
 import com.moodTracker.mapper.UserMapper;
@@ -179,9 +180,64 @@ class UserServiceImplTest {
     class ChangePassword {
 
         @Test
-        void shouldChangePasswordAndReturnConfirmation() {
-            ResetPasswordRequest request = new ResetPasswordRequest(EMAIL, "new-password");
-            User user = User.builder()
+        void shouldChangePasswordWhenCurrentPasswordIsCorrect() {
+            ChangePasswordRequest request = new ChangePasswordRequest(RAW_PASSWORD, "new-password");
+            User user = existingUser();
+            when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+            when(passwordEncoder.matches(RAW_PASSWORD, ENCODED_PASSWORD)).thenReturn(true);
+            when(passwordEncoder.matches("new-password", ENCODED_PASSWORD)).thenReturn(false);
+            when(passwordEncoder.encode("new-password")).thenReturn("new-encoded-password");
+
+            service.changePassword(EMAIL, request);
+
+            assertThat(user.getPassword()).isEqualTo("new-encoded-password");
+            verify(passwordEncoder).encode("new-password");
+            verify(userRepository).save(user);
+        }
+
+        @Test
+        void shouldThrowWhenChangingPasswordForUnknownUser() {
+            ChangePasswordRequest request = new ChangePasswordRequest(RAW_PASSWORD, "new-password");
+            when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.changePassword(EMAIL, request))
+                    .isInstanceOf(UsernameNotFoundException.class)
+                    .hasMessage("User not found");
+
+            verifyNoInteractions(passwordEncoder);
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        void shouldRejectIncorrectCurrentPassword() {
+            ChangePasswordRequest request = new ChangePasswordRequest("wrong-password", "new-password");
+            when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(existingUser()));
+            when(passwordEncoder.matches("wrong-password", ENCODED_PASSWORD)).thenReturn(false);
+
+            assertThatThrownBy(() -> service.changePassword(EMAIL, request))
+                    .isInstanceOf(BadCredentialsException.class)
+                    .hasMessage("Current password is incorrect");
+
+            verify(passwordEncoder, never()).encode(any());
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        void shouldRejectReusingCurrentPassword() {
+            ChangePasswordRequest request = new ChangePasswordRequest(RAW_PASSWORD, RAW_PASSWORD);
+            when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(existingUser()));
+            when(passwordEncoder.matches(RAW_PASSWORD, ENCODED_PASSWORD)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.changePassword(EMAIL, request))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessage("New password must be different from current password");
+
+            verify(passwordEncoder, never()).encode(any());
+            verify(userRepository, never()).save(any());
+        }
+
+        private User existingUser() {
+            return User.builder()
                     .id(1L)
                     .firstName("Emir")
                     .lastName("Totic")
@@ -190,31 +246,6 @@ class UserServiceImplTest {
                     .enabled(true)
                     .role(Role.USER)
                     .build();
-            when(userRepository.findUserByEmail(EMAIL)).thenReturn(Optional.of(user));
-            when(passwordEncoder.encode("new-password")).thenReturn("new-encoded-password");
-
-            String result = service.changePassword(request);
-
-            assertThat(result).isEqualTo(
-                    "Password has been changed for user " + EMAIL
-                            + ". Please continue to login page."
-            );
-            assertThat(user.getPassword()).isEqualTo("new-encoded-password");
-            verify(passwordEncoder).encode("new-password");
-            verify(userRepository).save(user);
-        }
-
-        @Test
-        void shouldThrowWhenChangingPasswordForUnknownUser() {
-            ResetPasswordRequest request = new ResetPasswordRequest(EMAIL, "new-password");
-            when(userRepository.findUserByEmail(EMAIL)).thenReturn(Optional.empty());
-
-            assertThatThrownBy(() -> service.changePassword(request))
-                    .isInstanceOf(UsernameNotFoundException.class)
-                    .hasMessage("User not found.");
-
-            verifyNoInteractions(passwordEncoder);
-            verify(userRepository, never()).save(any());
         }
     }
 }
