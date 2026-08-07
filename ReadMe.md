@@ -6,6 +6,12 @@ A full-stack mood tracking application built around a Spring Boot REST API. It a
 
 > This project is a portfolio application focused on backend engineering: API design, authentication, persistence, database migrations, external service integration, failure handling, and containerized deployment.
 
+## System Architecture
+
+The following diagram presents the complete application architecture, including authentication, mood tracking, AI analysis, persistence, scheduled maintenance, and deployment.
+
+![Mood Tracker system architecture](docs/images/MoodTrackedDiagram.png)
+
 ## Highlights
 
 - Authentication using Spring Security, signed JWTs, and database-backed token validation
