@@ -8,8 +8,9 @@ A full-stack mood tracking application built around a Spring Boot REST API. It a
 
 ## Highlights
 
-- Stateless authentication using Spring Security and signed JWTs
-- Password hashing with BCrypt and token revocation on logout
+- Authentication using Spring Security, signed JWTs, and database-backed token validation
+- Password hashing with BCrypt, authenticated password changes, and persistent token revocation on logout
+- Automatic cleanup of expired authentication tokens every four days
 - One mood entry per user per day, enforced at both application and database level
 - Paginated mood history with date-range validation
 - AI analysis of the most recent 30 days of mood entries
@@ -56,6 +57,8 @@ MySQL / Flyway
 - **AI output is treated as untrusted input.** Responses are extracted from the provider envelope, parsed with Jackson, validated, normalized, and persisted only when usable.
 - **External failures are bounded.** AI calls use connect/read timeouts, a maximum number of attempts, capped exponential backoff, and selective retries for transient HTTP failures.
 - **Analysis and plan generation are separate workflows.** The latest valid analysis is persisted per user and becomes the input for plan generation.
+- **JWTs are verified against server-side state.** Only signed, unexpired, non-revoked tokens registered in the database are accepted. The database stores a SHA-256 token hash rather than the raw JWT.
+- **Expired authentication data is removed automatically.** A scheduled cleanup job deletes expired token records every four days.
 - **Secrets are externalized.** Database credentials, JWT configuration, and provider credentials are supplied through environment variables.
 
 ## Technology Stack
@@ -126,7 +129,44 @@ Authorization: Bearer <jwt>
 | `POST` | `/api/auth/register` | Register a user |
 | `POST` | `/api/auth/login` | Authenticate and receive a JWT |
 | `POST` | `/api/auth/logout` | Revoke the current JWT |
-| `POST` | `/api/auth/change-password` | Change a user's password |
+| `GET` | `/api/auth/validate` | Validate the current JWT and return its expiration time |
+| `POST` | `/api/auth/change-password` | Change the authenticated user's password |
+
+Login creates an `auth_tokens` record containing the token's SHA-256 hash, JWT ID, owner, expiration time, and revocation status. The raw JWT is not persisted. Logout marks the corresponding record as revoked, and expired records are deleted automatically every four days.
+
+Validate the token when restoring a client session:
+
+```http
+GET /api/auth/validate
+Authorization: Bearer <jwt>
+```
+
+Example successful response:
+
+```json
+{
+  "valid": true,
+  "email": "user@example.com",
+  "expiresAt": "2026-08-07T15:00:00Z"
+}
+```
+
+Missing, unknown, revoked, malformed, or expired tokens receive `401 Unauthorized`. Clients should then remove their locally stored token and redirect the user to the login page.
+
+Change the authenticated user's password:
+
+```http
+POST /api/auth/change-password
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{
+  "currentPassword": "current-password",
+  "newPassword": "new-password"
+}
+```
+
+The new password must contain between 8 and 72 characters and must differ from the current password.
 
 ### Mood entries
 
@@ -228,7 +268,7 @@ cd mood-tracker
 ./mvnw spring-boot:run
 ```
 
-Flyway applies the database migrations during application startup.
+Flyway applies the database migrations during application startup. Migration `V6__Create_auth_tokens_table.sql` creates the persistent JWT token store used for validation, revocation, expiration checks, and scheduled cleanup.
 
 ## Docker
 
@@ -249,7 +289,7 @@ The current implementation is a deployed portfolio MVP. The next engineering pri
 
 - Expand automated coverage with unit, MockMvc, repository, and Testcontainers integration tests
 - Harden account recovery and resource-ownership authorization
-- Replace the in-memory JWT blacklist with a shared TTL store such as Redis
+- Add session-management endpoints for viewing and revoking tokens issued to other devices
 - Extract the OpenRouter HTTP client, prompt builders, and response validation into dedicated components
 - Add Resilience4j circuit breaking, retry jitter, rate limiting, and provider metrics
 - Move long-running AI generation to an asynchronous job workflow
@@ -259,4 +299,4 @@ The current implementation is a deployed portfolio MVP. The next engineering pri
 
 ## Author
 
-**Emir Totić** — Java / Spring Boot backend development and AI service integrations
+**Emir Totić** — Java / Spring Boot backend development | Kafka | Microservices | High-Availability | Payments/Wallet Integrations
