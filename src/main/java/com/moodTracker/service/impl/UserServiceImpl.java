@@ -9,6 +9,7 @@ import com.moodTracker.exception.BadRequestException;
 import com.moodTracker.mapper.UserMapper;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.security.JwtService;
+import com.moodTracker.security.TokenBlacklistService;
 import com.moodTracker.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -29,6 +30,7 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
+    private final TokenBlacklistService tokenBlacklistService;
 
     @Override
     public void registerUser(RegisterRequest request) {
@@ -59,7 +61,16 @@ public class UserServiceImpl implements UserService {
         org.springframework.security.core.userdetails.User userDetails =
                 (org.springframework.security.core.userdetails.User) auth.getPrincipal();
 
-        return jwtService.generateToken(userDetails);
+        String token = jwtService.generateToken(userDetails);
+        User user = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+        tokenBlacklistService.registerIssuedToken(
+                token,
+                jwtService.extractJti(token),
+                jwtService.extractExpiration(token).toInstant(),
+                user
+        );
+        return token;
     }
 
     @Override

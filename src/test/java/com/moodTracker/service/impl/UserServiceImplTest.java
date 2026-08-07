@@ -9,6 +9,7 @@ import com.moodTracker.entity.User;
 import com.moodTracker.mapper.UserMapper;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.security.JwtService;
+import com.moodTracker.security.TokenBlacklistService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Date;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -56,6 +59,9 @@ class UserServiceImplTest {
     @Mock
     private JwtService jwtService;
 
+    @Mock
+    private TokenBlacklistService tokenBlacklistService;
+
     private UserServiceImpl service;
 
     @BeforeEach
@@ -65,7 +71,8 @@ class UserServiceImplTest {
                 userMapper,
                 passwordEncoder,
                 authenticationManager,
-                jwtService
+                jwtService,
+                tokenBlacklistService
         );
     }
 
@@ -149,6 +156,12 @@ class UserServiceImplTest {
             when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
                     .thenReturn(authentication);
             when(jwtService.generateToken(principal)).thenReturn("generated-jwt");
+            User user = existingUser();
+            Instant expiration = Instant.now().plusSeconds(3600);
+            Date expirationDate = Date.from(expiration);
+            when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+            when(jwtService.extractJti("generated-jwt")).thenReturn("token-id");
+            when(jwtService.extractExpiration("generated-jwt")).thenReturn(expirationDate);
 
             String result = service.login(request);
 
@@ -160,6 +173,8 @@ class UserServiceImplTest {
             assertThat(tokenCaptor.getValue().getPrincipal()).isEqualTo(EMAIL);
             assertThat(tokenCaptor.getValue().getCredentials()).isEqualTo(RAW_PASSWORD);
             verify(jwtService).generateToken(principal);
+            verify(tokenBlacklistService).registerIssuedToken(
+                    "generated-jwt", "token-id", expirationDate.toInstant(), user);
         }
 
         @Test
@@ -236,16 +251,17 @@ class UserServiceImplTest {
             verify(userRepository, never()).save(any());
         }
 
-        private User existingUser() {
-            return User.builder()
-                    .id(1L)
-                    .firstName("Emir")
-                    .lastName("Totic")
-                    .email(EMAIL)
-                    .password(ENCODED_PASSWORD)
-                    .enabled(true)
-                    .role(Role.USER)
-                    .build();
-        }
+    }
+
+    private User existingUser() {
+        return User.builder()
+                .id(1L)
+                .firstName("Emir")
+                .lastName("Totic")
+                .email(EMAIL)
+                .password(ENCODED_PASSWORD)
+                .enabled(true)
+                .role(Role.USER)
+                .build();
     }
 }

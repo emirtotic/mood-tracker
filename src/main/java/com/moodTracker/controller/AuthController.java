@@ -4,6 +4,7 @@ import com.moodTracker.dto.JwtResponse;
 import com.moodTracker.dto.LoginRequest;
 import com.moodTracker.dto.RegisterRequest;
 import com.moodTracker.dto.ChangePasswordRequest;
+import com.moodTracker.dto.TokenValidationResponse;
 import com.moodTracker.security.JwtService;
 import com.moodTracker.security.TokenBlacklistService;
 import com.moodTracker.service.UserService;
@@ -14,6 +15,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.Instant;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -34,6 +37,15 @@ public class AuthController {
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
         String token = userService.login(request);
         return ResponseEntity.ok(new JwtResponse(token));
+    }
+
+    @GetMapping("/validate")
+    public ResponseEntity<TokenValidationResponse> validate(
+            @AuthenticationPrincipal UserDetails principal,
+            @RequestHeader("Authorization") String authHeader) {
+        String token = authHeader.substring(7);
+        Instant expiresAt = jwtService.extractExpiration(token).toInstant();
+        return ResponseEntity.ok(new TokenValidationResponse(true, principal.getUsername(), expiresAt));
     }
 
     @PostMapping(
