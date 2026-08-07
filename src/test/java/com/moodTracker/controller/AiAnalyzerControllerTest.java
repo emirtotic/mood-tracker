@@ -1,6 +1,6 @@
 package com.moodTracker.controller;
 
-import com.moodTracker.dto.AiPlan;
+import com.moodTracker.dto.AiPlanResponse;
 import com.moodTracker.dto.MoodEntryAiResponse;
 import com.moodTracker.security.JwtAuthenticationFilter;
 import com.moodTracker.service.AiAdviceService;
@@ -79,7 +79,7 @@ class AiAnalyzerControllerTest {
     @Test
     void shouldGeneratePlanForAuthenticatedUser() throws Exception {
         when(aiAdviceService.generatePlan(EMAIL))
-                .thenReturn(new AiPlan("Day 1\n- Take a short walk."));
+                .thenReturn(new AiPlanResponse("Day 1\n- Take a short walk."));
 
         mockMvc.perform(post("/ai/plan").with(user(EMAIL)))
                 .andExpect(status().isOk())

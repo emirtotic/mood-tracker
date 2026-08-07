@@ -3,7 +3,7 @@ package com.moodTracker.service.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.moodTracker.dto.AiPlan;
+import com.moodTracker.dto.AiPlanResponse;
 import com.moodTracker.dto.MoodEntryAiResponse;
 import com.moodTracker.dto.MoodEntryDto;
 import com.moodTracker.entity.AiAnalysis;
@@ -11,7 +11,7 @@ import com.moodTracker.entity.User;
 import com.moodTracker.repository.AiAnalysisRepository;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.service.MoodEntryService;
-import org.apache.kafka.common.errors.ResourceNotFoundException;
+import com.moodTracker.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -264,7 +264,7 @@ class AiAdviceServiceImplTest {
                     eq(String.class)
             )).thenReturn(ResponseEntity.ok(openRouterResponse("  " + plan + "  ")));
 
-            AiPlan result = service.generatePlan(EMAIL);
+            AiPlanResponse result = service.generatePlan(EMAIL);
 
             assertThat(result.getResponse()).isEqualTo(plan.trim());
 

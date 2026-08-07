@@ -107,7 +107,7 @@ class MoodControllerTest {
                                 """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409))
-                .andExpect(jsonPath("$.error").value("Duplicated Entry"))
+                .andExpect(jsonPath("$.error").value("Conflict"))
                 .andExpect(jsonPath("$.message")
                         .value("Mood entry for 2026-07-20 already exists"));
     }

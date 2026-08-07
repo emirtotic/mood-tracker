@@ -10,7 +10,7 @@ import com.moodTracker.exception.MoodEntryAlreadyExistsException;
 import com.moodTracker.mapper.MoodEntryMapper;
 import com.moodTracker.repository.MoodEntryRepository;
 import com.moodTracker.repository.UserRepository;
-import org.apache.kafka.common.errors.ResourceNotFoundException;
+import com.moodTracker.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -18,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -73,7 +74,7 @@ class MoodEntryServiceImplTest {
             MoodEntryRequest request = new MoodEntryRequest(4, date, "Today is a good day");
             when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
             when(moodEntryRepository.existsByUserIdAndEntryDate(USER_ID, date)).thenReturn(false);
-            when(moodEntryRepository.save(any(MoodEntry.class))).thenAnswer(invocation -> {
+            when(moodEntryRepository.saveAndFlush(any(MoodEntry.class))).thenAnswer(invocation -> {
                 MoodEntry entry = invocation.getArgument(0);
                 entry.setId(10L);
                 return entry;
@@ -85,7 +86,7 @@ class MoodEntryServiceImplTest {
                     .isEqualTo(new MoodEntryResponse(10L, "2026-07-20", 4, "Today is a good day"));
 
             ArgumentCaptor<MoodEntry> captor = ArgumentCaptor.forClass(MoodEntry.class);
-            verify(moodEntryRepository).save(captor.capture());
+            verify(moodEntryRepository).saveAndFlush(captor.capture());
             assertThat(captor.getValue())
                     .extracting(MoodEntry::getUser, MoodEntry::getEntryDate,
                             MoodEntry::getMoodScore, MoodEntry::getNote)
@@ -98,7 +99,7 @@ class MoodEntryServiceImplTest {
             MoodEntryRequest request = new MoodEntryRequest(3, null, "Usual day");
             when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
             when(moodEntryRepository.existsByUserIdAndEntryDate(USER_ID, beforeCall)).thenReturn(false);
-            when(moodEntryRepository.save(any(MoodEntry.class))).thenAnswer(invocation -> invocation.getArgument(0));
+            when(moodEntryRepository.saveAndFlush(any(MoodEntry.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
             MoodEntryResponse response = service.create(EMAIL, request);
 
@@ -118,7 +119,23 @@ class MoodEntryServiceImplTest {
                     .isInstanceOf(MoodEntryAlreadyExistsException.class)
                     .hasMessageContaining(date.toString());
 
-            verify(moodEntryRepository, never()).save(any());
+            verify(moodEntryRepository, never()).saveAndFlush(any());
+        }
+
+        @Test
+        void shouldRejectDuplicateCreatedByConcurrentRequest() {
+            LocalDate date = LocalDate.of(2026, 7, 20);
+            MoodEntryRequest request = new MoodEntryRequest(4, date, "Today is a good day");
+            when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+            when(moodEntryRepository.existsByUserIdAndEntryDate(USER_ID, date)).thenReturn(false);
+            when(moodEntryRepository.saveAndFlush(any(MoodEntry.class)))
+                    .thenThrow(new DataIntegrityViolationException("Unique constraint violation"));
+
+            assertThatThrownBy(() -> service.create(EMAIL, request))
+                    .isInstanceOf(MoodEntryAlreadyExistsException.class)
+                    .hasMessageContaining(date.toString());
+
+            verify(moodEntryRepository).saveAndFlush(any(MoodEntry.class));
         }
 
         @Test
@@ -127,8 +144,8 @@ class MoodEntryServiceImplTest {
 
             assertThatThrownBy(() ->
                     service.create(EMAIL, new MoodEntryRequest(4, LocalDate.now(), "Today is a good day")))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("User not found");
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage("User not found: " + EMAIL);
 
             verifyNoInteractions(moodEntryRepository);
         }
@@ -290,7 +307,7 @@ class MoodEntryServiceImplTest {
                     .thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.getToday(EMAIL))
-                    .isInstanceOf(IllegalStateException.class)
+                    .isInstanceOf(ResourceNotFoundException.class)
                     .hasMessage("No entry for today");
         }
     }

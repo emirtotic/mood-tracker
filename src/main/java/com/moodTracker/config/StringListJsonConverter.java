@@ -18,7 +18,7 @@ public class StringListJsonConverter implements AttributeConverter<List<String>,
         try {
             return attribute == null ? "[]" : MAPPER.writeValueAsString(attribute);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to serialize suggestions", e);
+            throw new IllegalStateException("Failed to serialize suggestions", e);
         }
     }
 
@@ -28,7 +28,7 @@ public class StringListJsonConverter implements AttributeConverter<List<String>,
             if (dbData == null || dbData.isBlank()) return Collections.emptyList();
             return MAPPER.readValue(dbData, TYPE);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to deserialize suggestions", e);
+            throw new IllegalStateException("Failed to deserialize suggestions", e);
         }
     }
 }

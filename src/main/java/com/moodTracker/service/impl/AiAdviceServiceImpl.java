@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.moodTracker.dto.AiPlan;
+import com.moodTracker.dto.AiPlanResponse;
 import com.moodTracker.dto.MoodEntryAiResponse;
 import com.moodTracker.dto.MoodEntryDto;
 import com.moodTracker.entity.AiAnalysis;
@@ -15,7 +15,7 @@ import com.moodTracker.service.AiAdviceService;
 import com.moodTracker.service.MoodEntryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.common.errors.ResourceNotFoundException;
+import com.moodTracker.exception.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -158,7 +158,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
     }
 
     @Override
-    public AiPlan generatePlan(String email) {
+    public AiPlanResponse generatePlan(String email) {
         validateRequiredFields();
 
         User user = findUserByEmail(email);
@@ -252,7 +252,7 @@ public class AiAdviceServiceImpl implements AiAdviceService {
             );
         }
 
-        AiPlan plan = new AiPlan();
+        AiPlanResponse plan = new AiPlanResponse();
         plan.setResponse(planText.trim());
 
         log.info("AI plan generated successfully for user {}", user.getEmail());

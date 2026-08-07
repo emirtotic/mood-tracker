@@ -9,7 +9,7 @@ import lombok.Setter;
 @NoArgsConstructor
 @Getter
 @Setter
-public class AiPlan {
+public class AiPlanResponse {
 
     private String response;
 }

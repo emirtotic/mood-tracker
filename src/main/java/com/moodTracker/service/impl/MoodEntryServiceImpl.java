@@ -7,13 +7,14 @@ import com.moodTracker.entity.MoodEntry;
 import com.moodTracker.entity.User;
 import com.moodTracker.exception.BadRequestException;
 import com.moodTracker.exception.MoodEntryAlreadyExistsException;
+import com.moodTracker.exception.ResourceNotFoundException;
 import com.moodTracker.mapper.MoodEntryMapper;
 import com.moodTracker.repository.MoodEntryRepository;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.service.MoodEntryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.common.errors.ResourceNotFoundException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -35,16 +36,14 @@ public class MoodEntryServiceImpl implements MoodEntryService {
     @Override
     public MoodEntryResponse create(String userEmail, MoodEntryRequest req) {
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new IllegalStateException("User not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userEmail));
 
         LocalDate targetDate = req.date() != null
                 ? req.date()
                 : LocalDate.now();
 
         if (moodRepo.existsByUserIdAndEntryDate(user.getId(), targetDate)) {
-            throw new MoodEntryAlreadyExistsException(
-                    "Mood entry for " + targetDate + " already exists for user " + user.getEmail()
-                    + ". Please edit the last entry!");
+            throw duplicateEntryException(user, targetDate);
         }
 
         log.info("Creating new entry for {} {}", user.getFirstName(), user.getLastName());
@@ -56,7 +55,13 @@ public class MoodEntryServiceImpl implements MoodEntryService {
                 .note(req.note())
                 .build();
 
-        me = moodRepo.save(me);
+        try {
+            me = moodRepo.saveAndFlush(me);
+        } catch (DataIntegrityViolationException ex) {
+            log.warn("Concurrent mood entry creation rejected for user {} and date {}",
+                    user.getId(), targetDate);
+            throw duplicateEntryException(user, targetDate);
+        }
         return new MoodEntryResponse(me.getId(), me.getEntryDate().toString(), me.getMoodScore(), me.getNote());
     }
 
@@ -64,7 +69,7 @@ public class MoodEntryServiceImpl implements MoodEntryService {
     public MoodEntryResponse update(String userEmail, MoodEntryRequest req) {
 
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new IllegalStateException("User not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userEmail));
 
         Optional<MoodEntry> existingEntry = moodRepo.findByUserIdAndEntryDate(user.getId(), req.date());
 
@@ -161,14 +166,20 @@ public class MoodEntryServiceImpl implements MoodEntryService {
     @Override
     public MoodEntryResponse getToday(String userEmail) {
         User user = userRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new IllegalStateException("User not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userEmail));
         var today = LocalDate.now();
 
         MoodEntry me = moodRepo.findByUserIdAndEntryDate(user.getId(), today)
-                .orElseThrow(() -> new IllegalStateException("No entry for today"));
+                .orElseThrow(() -> new ResourceNotFoundException("No entry for today"));
 
         log.info("Getting today's entry...");
 
         return new MoodEntryResponse(me.getId(), me.getEntryDate().toString(), me.getMoodScore(), me.getNote());
+    }
+
+    private MoodEntryAlreadyExistsException duplicateEntryException(User user, LocalDate targetDate) {
+        return new MoodEntryAlreadyExistsException(
+                "Mood entry for " + targetDate + " already exists for user " + user.getEmail()
+                        + ". Please edit the last entry!");
     }
 }

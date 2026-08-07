@@ -6,6 +6,7 @@ import com.moodTracker.dto.ChangePasswordRequest;
 import com.moodTracker.entity.Role;
 import com.moodTracker.entity.User;
 import com.moodTracker.exception.BadRequestException;
+import com.moodTracker.exception.ConflictException;
 import com.moodTracker.mapper.UserMapper;
 import com.moodTracker.repository.UserRepository;
 import com.moodTracker.security.JwtService;
@@ -35,7 +36,7 @@ public class UserServiceImpl implements UserService {
     @Override
     public void registerUser(RegisterRequest request) {
         if (userRepository.existsByEmail(request.email())) {
-            throw new RuntimeException("Email already in use");
+            throw new ConflictException("Email already in use");
         }
 
         User user = userMapper.toEntity(request);
