@@ -60,7 +60,10 @@ MySQL / Flyway
 
 - **Deterministic calculations stay in the application.** The average mood score is calculated in Java; the language model is used only for semantic analysis and text generation.
 - **Database constraints protect domain invariants.** A unique constraint on `(user_id, entry_date)` guarantees no duplicate daily entry, including under concurrent requests.
+- **Concurrent duplicate entries return a domain conflict.** A database constraint violation during creation is translated to `409 Conflict` instead of leaking as an internal server error.
+- **Mood entry ownership is enforced in repository queries.** Delete operations resolve entries by both entry ID and authenticated user ID, so users cannot delete another user's data.
 - **AI output is treated as untrusted input.** Responses are extracted from the provider envelope, parsed with Jackson, validated, normalized, and persisted only when usable.
+- **AI access follows the authenticated identity.** Regular users can analyze only their own data; an explicit target email is honored only for users with the administrator role.
 - **External failures are bounded.** AI calls use connect/read timeouts, a maximum number of attempts, capped exponential backoff, and selective retries for transient HTTP failures.
 - **Analysis and plan generation are separate workflows.** The latest valid analysis is persisted per user and becomes the input for plan generation.
 - **JWTs are verified against server-side state.** Only signed, unexpired, non-revoked tokens registered in the database are accepted. The database stores a SHA-256 token hash rather than the raw JWT.
@@ -194,6 +197,8 @@ Pagination parameters supported by the range endpoint include `page`, `size`, an
 | `POST` | `/ai/analyze` | Analyze recent mood entries and persist the result |
 | `POST` | `/ai/plan` | Generate a seven-day plan from the latest analysis |
 
+For regular users, both endpoints always use the email from the authenticated JWT principal. Administrators may provide an explicit `email` query parameter to run the operation for another user.
+
 ## Project Structure
 
 ```text
@@ -208,7 +213,9 @@ src
 │   │   ├── mapper       # MapStruct mappings
 │   │   ├── repository   # Spring Data repositories
 │   │   ├── security     # JWT handling, filter, and token revocation
-│   │   └── service      # Business logic and external AI integration
+│   │   └── service      # Business logic
+│   │       ├── ai       # OpenRouter client, prompt creation, and response parsing
+│   │       └── impl     # Application service implementations
 │   └── resources
 │       ├── application.properties
 │       └── db/migration # Flyway database migrations
@@ -294,9 +301,8 @@ docker run --rm \
 The current implementation is a deployed portfolio MVP. The next engineering priorities are:
 
 - Expand automated coverage with unit, MockMvc, repository, and Testcontainers integration tests
-- Harden account recovery and resource-ownership authorization
+- Harden account recovery and continue auditing resource-ownership authorization
 - Add session-management endpoints for viewing and revoking tokens issued to other devices
-- Extract the OpenRouter HTTP client, prompt builders, and response validation into dedicated components
 - Add Resilience4j circuit breaking, retry jitter, rate limiting, and provider metrics
 - Move long-running AI generation to an asynchronous job workflow
 - Add OpenAPI documentation and consistent RFC 9457 problem responses
