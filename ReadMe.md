@@ -12,6 +12,7 @@ A full-stack mood tracking application built around a Spring Boot REST API. It a
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue)
 ![JWT](https://img.shields.io/badge/Auth-JWT-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
+![Railway](https://img.shields.io/badge/Deployed-Railway-0B0D0E?logo=railway&logoColor=white)
 
 ## System Architecture
 
