@@ -68,6 +68,13 @@ public class OpenRouterClient {
             if (advice != null) {
                 return advice;
             }
+
+            log.warn(
+                    "OpenRouter returned HTTP 200 for analysis, but response could not be parsed. Attempt {}/{}",
+                    attempt,
+                    MAX_ATTEMPTS
+            );
+
             if (!result.retryable() || attempt == MAX_ATTEMPTS) {
                 return null;
             }
@@ -100,19 +107,46 @@ public class OpenRouterClient {
 
     private ObjectNode analysisRequest(String prompt, double temperature) {
         ObjectNode request = baseRequest(temperature, ANALYSIS_MAX_TOKENS);
-        request.putObject("response_format").put("type", "json_object");
+
+        ObjectNode responseFormat = request.putObject("response_format");
+        responseFormat.put("type", "json_schema");
+
+        ObjectNode jsonSchema = responseFormat.putObject("json_schema");
+        jsonSchema.put("name", "mood_analysis");
+        jsonSchema.put("strict", true);
+
+        ObjectNode schema = jsonSchema.putObject("schema");
+        schema.put("type", "object");
+
+        ObjectNode properties = schema.putObject("properties");
+
+        properties.putObject("summary")
+                .put("type", "string");
+
+        ObjectNode suggestions = properties.putObject("suggestions");
+        suggestions.put("type", "array");
+        suggestions.put("minItems", 5);
+        suggestions.put("maxItems", 5);
+        suggestions.putObject("items")
+                .put("type", "string");
+
+        ArrayNode required = schema.putArray("required");
+        required.add("summary");
+        required.add("suggestions");
+
+        schema.put("additionalProperties", false);
+
+        request.putObject("provider")
+                .put("require_parameters", true);
+
         addMessage(request, "system", """
-                Return only one valid JSON object.
+            You are a supportive wellbeing coach.
+            Analyze the user's mood entries and provide a concise summary
+            and five practical wellbeing suggestions.
+            """);
 
-                The object must contain:
-                - "summary": a non-empty string
-                - "suggestions": an array containing exactly five non-empty strings
-
-                Do not include Markdown.
-                Do not include code fences.
-                Do not include any text outside the JSON object.
-                """);
         addMessage(request, "user", prompt);
+
         return request;
     }
 
